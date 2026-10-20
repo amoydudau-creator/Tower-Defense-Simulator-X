@@ -1,0 +1,1813 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tower Defense Simulator - Roblox Edition</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js & OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Optional Firebase Cloud Sync -->
+    <script type="module">
+        try {
+            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+                const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
+                const { getAuth, signInAnonymously, signInWithCustomToken } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
+                const { getFirestore, doc, setDoc, getDoc, collection, getDocs } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'tds-roblox-3d';
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                window.CloudStorage = {
+                    uid: () => auth.currentUser?.uid || 'local-player',
+                    async save(data) {
+                        if (!auth.currentUser) return;
+                        const ref = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'saveData', 'profile');
+                        await setDoc(ref, { payload: JSON.stringify(data), updatedAt: Date.now() });
+
+                        const lbRef = doc(db, 'artifacts', appId, 'public', 'data', 'leaderboard', auth.currentUser.uid);
+                        await setDoc(lbRef, {
+                            uid: auth.currentUser.uid,
+                            name: data.playerName,
+                            shopCoins: Number(data.shopCoins || 0),
+                            highestWave: Number(data.highestWave || 0),
+                            level: Number(data.level || 1),
+                            updatedAt: Date.now()
+                        });
+                    },
+                    async load() {
+                        if (!auth.currentUser) return null;
+                        const ref = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'saveData', 'profile');
+                        const snap = await getDoc(ref);
+                        if (snap.exists() && snap.data().payload) {
+                            return JSON.parse(snap.data().payload);
+                        }
+                        return null;
+                    },
+                    async fetchLeaderboards() {
+                        if (!auth.currentUser) return [];
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'leaderboard');
+                        const snap = await getDocs(colRef);
+                        const list = [];
+                        snap.forEach(d => list.push(d.data()));
+                        return list;
+                    }
+                };
+                if (window.onCloudReady) window.onCloudReady();
+            }
+        } catch (err) {}
+    </script>
+
+    <style>
+        :root {
+            --bg-dark: #0b0e14;
+            --bg-panel: #151922;
+            --border-color: #262c3a;
+            --blue: #0088ff;
+            --green: #00e676;
+            --red: #ff3b3b;
+            --yellow: #ffbe0b;
+        }
+
+        * { user-select: none; -webkit-user-select: none; box-sizing: border-box; }
+        body {
+            font-family: 'Nunito', sans-serif;
+            overflow: hidden;
+            background-color: var(--bg-dark);
+            margin: 0;
+            padding: 0;
+            color: white;
+        }
+        .font-game { font-family: 'Fredoka One', cursive; letter-spacing: 0.5px; }
+        
+        #canvas-container { position: absolute; inset: 0; z-index: 1; outline: none; cursor: grab; }
+        #canvas-container:active { cursor: grabbing; }
+        #ui-layer { position: absolute; inset: 0; z-index: 10; pointer-events: none; }
+        .interactive { pointer-events: auto; }
+
+        .btn {
+            font-family: 'Fredoka One', cursive;
+            border-radius: 12px;
+            transition: all 0.12s cubic-bezier(0.34, 1.56, 0.64, 1);
+            border: 2px solid rgba(255,255,255,0.15);
+            text-shadow: 0 2px 3px rgba(0,0,0,0.5);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+        .btn:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-2px); }
+        .btn:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 0 0 transparent !important; }
+        .btn:disabled { opacity: 0.45; filter: grayscale(0.8); cursor: not-allowed; }
+        
+        .btn-blue { background: linear-gradient(180deg, #1aa3ff, #0066cc); box-shadow: 0 5px 0 #004488; }
+        .btn-green { background: linear-gradient(180deg, #10f587, #00b359); box-shadow: 0 5px 0 #00773b; }
+        .btn-red { background: linear-gradient(180deg, #ff5252, #cc1111); box-shadow: 0 5px 0 #880000; }
+        .btn-purple { background: linear-gradient(180deg, #b86bff, #7e22ce); box-shadow: 0 5px 0 #4c1182; }
+        .btn-yellow { background: linear-gradient(180deg, #ffd13b, #d99b00); box-shadow: 0 5px 0 #946600; color: #111; text-shadow: none; }
+        .btn-dark { background: linear-gradient(180deg, #374151, #1f2937); box-shadow: 0 4px 0 #0f172a; }
+
+        .panel {
+            background: var(--bg-panel);
+            border: 2px solid var(--border-color);
+            border-radius: 18px;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.65);
+        }
+
+        #hub-sidebar {
+            width: 280px;
+            background: rgba(12, 15, 20, 0.96);
+            border-right: 2px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+        #hub-content {
+            flex: 1;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 1.75rem 2rem;
+            background: radial-gradient(circle at top right, rgba(0, 136, 255, 0.14), rgba(10, 12, 18, 0.86));
+            backdrop-filter: blur(8px);
+        }
+        
+        .tab-btn {
+            padding: 0.85rem 1.25rem;
+            font-family: 'Fredoka One', cursive;
+            font-size: 0.98rem;
+            color: #9ca3af;
+            text-align: left;
+            transition: 0.2s;
+            border-left: 4px solid transparent;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+        }
+        .tab-btn:hover { background: rgba(255,255,255,0.05); color: white; }
+        .tab-btn.active {
+            background: rgba(0, 136, 255, 0.14);
+            color: #38bdf8;
+            border-left-color: #38bdf8;
+        }
+
+        .tab-section { display: none; animation: fadeIn 0.25s ease; }
+        .tab-section.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        ::-webkit-scrollbar { width: 10px; }
+        ::-webkit-scrollbar-track { background: #0b0d12; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 6px; border: 2px solid #0b0d12; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+        .tower-card {
+            background: linear-gradient(180deg, #1f2430 0%, #151821 100%);
+            border: 2px solid #2e3442;
+            border-radius: 16px;
+            padding: 15px;
+            min-height: 270px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .tower-card:hover {
+            border-color: #38bdf8;
+            transform: translateY(-4px);
+            box-shadow: 0 10px 25px rgba(0, 136, 255, 0.2);
+        }
+        .tower-card.equipped {
+            border-color: var(--green);
+            box-shadow: 0 0 20px rgba(0, 230, 118, 0.2);
+            background: linear-gradient(180deg, #182b24 0%, #121c18 100%);
+        }
+        .tower-card.unlocked { border-color: #3b82f6; }
+
+        .hotbar-slot {
+            width: 88px;
+            height: 104px;
+            background: rgba(18, 22, 30, 0.94);
+            border: 2px solid #333947;
+            border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            position: relative;
+        }
+        .hotbar-slot:hover { border-color: #38bdf8; transform: translateY(-5px); }
+        .hotbar-slot.selected {
+            border-color: var(--green);
+            background: rgba(16, 48, 34, 0.95);
+            transform: translateY(-8px);
+            box-shadow: 0 8px 20px rgba(0, 230, 118, 0.35);
+        }
+        .hotbar-slot.cant-afford { opacity: 0.5; filter: grayscale(0.5); }
+
+        #vfx-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; overflow: hidden; }
+        .dmg-text {
+            position: absolute;
+            font-family: 'Fredoka One', cursive;
+            font-size: 19px;
+            text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+            animation: floatUp 0.8s ease-out forwards;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 20;
+            white-space: nowrap;
+        }
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translate(-50%, -50%) scale(0.6); }
+            25% { transform: translate(-50%, -85%) scale(1.15); }
+            100% { opacity: 0; transform: translate(-50%, -175%) scale(0.95); }
+        }
+        
+        .enemy-hud-tag {
+            position: absolute;
+            transform: translate(-50%, -100%);
+            pointer-events: none;
+            z-index: 8;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 78px;
+        }
+        .enemy-name-label {
+            font-family: 'Fredoka One', cursive;
+            font-size: 10px;
+            color: #fff;
+            text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+            line-height: 1.1;
+            margin-bottom: 2px;
+            letter-spacing: 0.4px;
+        }
+        .enemy-hp-box {
+            width: 78px;
+            height: 14px;
+            background: rgba(10, 12, 16, 0.92);
+            border: 1.5px solid #000;
+            border-radius: 5px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+        }
+        .enemy-hp-fill {
+            height: 100%;
+            background: #00e676;
+            transition: width 0.08s linear, background-color 0.2s ease;
+        }
+        .enemy-hp-num {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Nunito', sans-serif;
+            font-weight: 900;
+            font-size: 9.5px;
+            color: #ffffff;
+            text-shadow: 1px 1px 1px #000, -1px -1px 1px #000;
+            white-space: nowrap;
+        }
+
+        .save-badge { transition: all 0.3s ease; }
+        .save-badge.saving {
+            border-color: #10f587 !important;
+            background: rgba(16, 245, 135, 0.18) !important;
+            color: #10f587 !important;
+            transform: scale(1.04);
+        }
+
+        .rank-1 { background: linear-gradient(135deg, rgba(250, 204, 21, 0.22), rgba(161, 98, 7, 0.15)); border-color: #facc15 !important; }
+        .rank-2 { background: linear-gradient(135deg, rgba(226, 232, 240, 0.18), rgba(100, 116, 139, 0.15)); border-color: #cbd5e1 !important; }
+        .rank-3 { background: linear-gradient(135deg, rgba(249, 115, 22, 0.20), rgba(154, 52, 18, 0.15)); border-color: #fb923c !important; }
+        .rank-me { box-shadow: 0 0 18px rgba(56, 189, 248, 0.35); border-color: #38bdf8 !important; }
+
+        #toast-container {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: center;
+            pointer-events: none;
+        }
+        .toast {
+            background: rgba(17, 20, 28, 0.96);
+            border: 2px solid var(--blue);
+            color: white;
+            padding: 10px 22px;
+            border-radius: 12px;
+            font-family: 'Fredoka One', cursive;
+            font-size: 14px;
+            animation: slideDown 0.25s ease, fadeOut 0.3s ease 3.2s forwards;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.65);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        @keyframes slideDown { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Scene Container -->
+    <div id="canvas-container"></div>
+    <div id="vfx-layer"></div>
+    <div id="toast-container"></div>
+
+    <!-- UI Layer -->
+    <div id="ui-layer" class="w-full h-full">
+        
+        <!-- ==================== MODAL DE BIENVENIDA (REGISTRO OBLIGATORIO) ==================== -->
+        <div id="welcome-modal" class="absolute inset-0 bg-black/95 z-[999] flex flex-col items-center justify-center interactive" style="display: none;">
+            <div class="panel p-8 max-w-md w-full border-sky-500 text-center shadow-[0_0_40px_rgba(0,136,255,0.3)]">
+                <div class="w-20 h-20 mx-auto bg-gradient-to-br from-blue-400 to-indigo-600 rounded-2xl border-4 border-[#151922] flex items-center justify-center mb-4 shadow-lg">
+                    <i class="fa-solid fa-shield-halved text-4xl text-white"></i>
+                </div>
+                <h1 class="font-game text-3xl text-sky-400 mb-2">¡BIENVENIDO!</h1>
+                <p class="text-sm text-gray-300 mb-6">Para unirte a la clasificación y guardar tu progreso automáticamente, debes registrar tu nombre de comandante.</p>
+                
+                <input id="welcome-name" type="text" maxlength="16" placeholder="Tu Nombre de Jugador..." class="w-full bg-[#090b10] border-2 border-sky-500/50 focus:border-sky-400 rounded-xl px-4 py-3 text-lg font-extrabold text-center text-white outline-none mb-4 transition">
+                
+                <button onclick="registerFirstTime()" class="btn btn-blue w-full py-4 text-lg">
+                    <i class="fa-solid fa-play"></i> CREAR PERFIL Y JUGAR
+                </button>
+            </div>
+        </div>
+
+        <!-- ==================== MAIN HUB MENU ==================== -->
+        <div id="hub-ui" class="interactive w-full h-full flex" style="display: none;">
+            
+            <!-- Left Sidebar -->
+            <div id="hub-sidebar">
+                <div class="p-4 text-center border-b border-[#262c3a]">
+                    <div class="w-12 h-12 mx-auto bg-gradient-to-br from-blue-400 to-indigo-600 rounded-2xl border-4 border-[#151922] flex items-center justify-center mb-1.5 shadow-lg">
+                        <i class="fa-solid fa-shield-halved text-xl text-white"></i>
+                    </div>
+                    <h1 class="font-game text-base leading-tight text-white">TOWER DEFENSE<br><span class="text-sky-400 text-[11px]">ROBLOX EDITION</span></h1>
+                </div>
+
+                <!-- Player Profile, Nickname, Best Wave & Shop Coins (Gold 🪙) -->
+                <div class="p-3.5 border-b border-[#262c3a] bg-[#10141b]">
+                    <!-- Nombre Estático Autoguardado -->
+                    <div class="mb-3 text-center bg-[#090b10] border border-[#262c3a] rounded-xl py-2">
+                        <label class="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider block mb-0.5"><i class="fa-solid fa-user text-sky-400 mr-1"></i> Comandante</label>
+                        <div id="hub-player-name-display" class="font-game text-lg text-white">Cargando...</div>
+                    </div>
+
+                    <div class="flex justify-between items-end mb-1">
+                        <span class="text-xs font-extrabold text-gray-400">NIVEL <span id="hub-level" class="text-white text-sm font-game">1</span></span>
+                        <span class="text-[10px] font-bold text-sky-400"><span id="hub-xp">0</span> / <span id="hub-max-xp">100</span> XP</span>
+                    </div>
+                    <div class="w-full h-2 bg-gray-800 rounded-full overflow-hidden border border-gray-700 mb-2.5">
+                        <div id="hub-xp-bar" class="h-full bg-sky-500 w-0 transition-all duration-300"></div>
+                    </div>
+
+                    <!-- Dual Stats Summary: Store Coins & Best Wave -->
+                    <div class="grid grid-cols-2 gap-2 mb-2.5">
+                        <div class="bg-[#090b10] p-2 rounded-xl border border-yellow-500/40">
+                            <div class="text-[9px] font-extrabold text-yellow-400/90 uppercase">🪙 Monedas</div>
+                            <div id="hub-coins" class="font-game text-yellow-400 text-lg leading-tight mt-0.5">150</div>
+                        </div>
+                        <div class="bg-[#090b10] p-2 rounded-xl border border-cyan-500/40">
+                            <div class="text-[9px] font-extrabold text-cyan-400/90 uppercase">🌊 Récord Ola</div>
+                            <div id="hub-best-wave" class="font-game text-cyan-300 text-lg leading-tight mt-0.5">Ola 0</div>
+                        </div>
+                    </div>
+
+                    <!-- Auto-Save Status Indicator -->
+                    <div id="hub-save-badge" class="save-badge flex items-center justify-between bg-[#0b0f17] px-2.5 py-1.5 rounded-lg border border-emerald-500/30 text-[10px] text-emerald-400 font-bold">
+                        <span><i class="fa-solid fa-cloud-arrow-up mr-1"></i> Auto-Guardado</span>
+                        <span id="hub-save-time" class="text-[9px] text-gray-400">Activo</span>
+                    </div>
+
+                    <div class="flex justify-between items-center mt-2">
+                        <button onclick="openBackupModal()" class="text-[10px] text-sky-400 hover:text-sky-300 font-bold transition">
+                            <i class="fa-solid fa-key"></i> Código Backup
+                        </button>
+                        <button onclick="cheatLevelUp()" class="text-[10px] text-gray-500 hover:text-sky-400 font-bold transition">
+                            ⚡ +5 Niveles
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Navigation Tabs -->
+                <div class="flex flex-col py-1.5 flex-1">
+                    <div onclick="switchTab('tab-play')" class="tab-btn active" id="btn-tab-play">
+                        <i class="fa-solid fa-gamepad w-5 text-center"></i> Jugar Partida
+                    </div>
+                    <div onclick="switchTab('tab-armory')" class="tab-btn" id="btn-tab-armory">
+                        <i class="fa-solid fa-store w-5 text-center"></i> Armería & Tienda
+                    </div>
+                    <div onclick="switchTab('tab-leaderboard')" class="tab-btn" id="btn-tab-leaderboard">
+                        <i class="fa-solid fa-trophy w-5 text-center text-yellow-400"></i> Clasificación Real
+                    </div>
+                    <div onclick="switchTab('tab-coop')" class="tab-btn" id="btn-tab-coop">
+                        <i class="fa-solid fa-user-group w-5 text-center"></i> Sala Co-Op
+                    </div>
+                    <div onclick="switchTab('tab-trade')" class="tab-btn" id="btn-tab-trade">
+                        <i class="fa-solid fa-handshake w-5 text-center"></i> Tradeo (Nvl 20)
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Hub Content -->
+            <div id="hub-content">
+                
+                <!-- 1. PLAY TAB -->
+                <div id="tab-play" class="tab-section active max-w-5xl mx-auto">
+                    
+                    <!-- HOURLY MAP ROTATION BANNER -->
+                    <div class="panel p-4 mb-5 border-2 border-sky-500/50 bg-gradient-to-r from-[#111927] via-[#151e2e] to-[#111824] shadow-lg">
+                        <div class="flex flex-wrap justify-between items-center gap-4">
+                            <div class="flex items-center gap-3.5">
+                                <div id="hub-map-icon-box" class="w-12 h-12 rounded-2xl bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center text-2xl text-emerald-300 shadow-md">
+                                    <i id="hub-map-icon" class="fa-solid fa-tree"></i>
+                                </div>
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-[10px] font-extrabold uppercase tracking-wider bg-sky-500/20 text-sky-300 px-2 py-0.5 rounded border border-sky-500/30">
+                                            🗺️ Mapa en Rotación (Cambia cada 1h)
+                                        </span>
+                                        <span id="hub-map-next-label" class="text-[10px] text-gray-400 font-bold hidden sm:inline">Siguiente: Desierto Cañón</span>
+                                    </div>
+                                    <h3 id="hub-map-name" class="font-game text-2xl text-white mt-0.5">Bosque Esmeralda</h3>
+                                </div>
+                            </div>
+
+                            <div class="flex items-center gap-3 bg-[#090c12] px-4 py-2.5 rounded-xl border border-sky-500/30">
+                                <i class="fa-solid fa-clock text-sky-400 text-xl animate-spin" style="animation-duration: 8s;"></i>
+                                <div>
+                                    <div class="text-[9px] font-extrabold text-gray-400 uppercase">Próximo Mapa en</div>
+                                    <div id="hub-map-timer" class="font-game text-xl text-sky-300 leading-none">59:59</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- RESUME SAVED MATCH BANNER -->
+                    <div id="resume-match-banner" class="hidden panel p-5 mb-5 border-2 border-emerald-400 bg-gradient-to-r from-emerald-950/90 via-[#12221d] to-[#151922] shadow-[0_0_25px_rgba(16,245,135,0.2)]">
+                        <div class="flex flex-wrap justify-between items-center gap-4">
+                            <div class="flex items-center gap-4">
+                                <div class="w-12 h-12 rounded-2xl bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center text-emerald-300 text-2xl animate-pulse">
+                                    <i class="fa-solid fa-rotate-right"></i>
+                                </div>
+                                <div>
+                                    <div class="text-xs font-extrabold text-emerald-400 uppercase tracking-wider">💾 Partida Guardada Detectada</div>
+                                    <h3 id="resume-match-title" class="font-game text-2xl text-white">Modo Medio • Oleada 4</h3>
+                                    <p id="resume-match-details" class="text-xs text-gray-300 font-bold">Efectivo: $850 | Salud Base: 100/100</p>
+                                </div>
+                            </div>
+                            <div class="flex gap-3">
+                                <button onclick="resumeSavedMatch()" class="btn btn-green px-5 py-2.5 text-sm">
+                                    <i class="fa-solid fa-play"></i> CONTINUAR PARTIDA
+                                </button>
+                                <button onclick="discardSavedMatch()" class="btn btn-dark px-3.5 py-2.5 text-xs text-red-300">
+                                    <i class="fa-solid fa-trash"></i> Descartar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap justify-between items-center gap-4 mb-5">
+                        <div>
+                            <h2 class="font-game text-3xl text-white mb-0.5">Selecciona Modo de Juego</h2>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="switchTab('tab-leaderboard')" class="btn btn-yellow px-4 py-2.5 text-xs">
+                                <i class="fa-solid fa-trophy"></i> TOP MUNDIAL
+                            </button>
+                            <button onclick="switchTab('tab-armory')" class="btn btn-blue px-4 py-2.5 text-xs">
+                                <i class="fa-solid fa-box-open"></i> LOADOUT (<span id="play-loadout-count">1</span>/5)
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5 pb-10">
+                        <div class="panel p-5 flex flex-col justify-between border-2 border-emerald-500/40 hover:border-emerald-400 transition cursor-pointer" onclick="startGame('easy')">
+                            <div>
+                                <h3 class="font-game text-2xl text-emerald-400 mb-2">NIVEL FÁCIL</h3>
+                                <p class="text-xs text-gray-300 mb-3">Ideal para comenzar. HP Normal.</p>
+                            </div>
+                            <button class="btn btn-green py-3 w-full text-base pointer-events-none">JUGAR FÁCIL (+100 🪙)</button>
+                        </div>
+                        <div class="panel p-5 flex flex-col justify-between border-2 border-sky-500/40 hover:border-sky-400 transition cursor-pointer" onclick="startGame('medium')">
+                            <div>
+                                <h3 class="font-game text-2xl text-sky-400 mb-2">NIVEL MEDIO</h3>
+                                <p class="text-xs text-gray-300 mb-3">Enemigos resistentes (HP x1.65).</p>
+                            </div>
+                            <button class="btn btn-blue py-3 w-full text-base pointer-events-none">JUGAR MEDIO (+300 🪙)</button>
+                        </div>
+                        <div class="panel p-5 flex flex-col justify-between border-2 border-purple-500/40 hover:border-purple-400 transition cursor-pointer" onclick="startGame('hard')">
+                            <div>
+                                <h3 class="font-game text-2xl text-purple-400 mb-2">NIVEL DIFÍCIL</h3>
+                                <p class="text-xs text-gray-300 mb-3">Desafío extremo (HP x2.5).</p>
+                            </div>
+                            <button class="btn btn-purple py-3 w-full text-base pointer-events-none">JUGAR DIFÍCIL (+500 🪙)</button>
+                        </div>
+                        <div class="panel p-5 flex flex-col justify-between border-2 border-red-500/60 hover:border-red-400 transition cursor-pointer" onclick="startGame('endless')">
+                            <div>
+                                <h3 class="font-game text-2xl text-red-400 mb-2"><i class="fa-solid fa-infinity mr-1"></i> ENDLESS</h3>
+                                <p class="text-xs text-gray-300 mb-3">Hordas infinitas. ¡Rompe el récord!</p>
+                            </div>
+                            <button class="btn btn-red py-3 w-full text-base pointer-events-none">MODO ENDLESS (+25 🪙/OLA)</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. ARMORY & SHOP TAB -->
+                <div id="tab-armory" class="tab-section max-w-6xl mx-auto pb-16">
+                    <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+                        <div>
+                            <h2 class="font-game text-4xl text-white mb-1">Armería y Tienda de Tropas</h2>
+                            <p class="text-gray-300 text-sm">
+                                Compra y equipa tropas para usarlas en partida. Guardado automático activo.
+                            </p>
+                        </div>
+                        <div class="flex items-center gap-3 bg-[#10141d] px-5 py-3 rounded-2xl border-2 border-yellow-500/50 shadow-lg">
+                            <i class="fa-solid fa-coins text-yellow-400 text-2xl"></i>
+                            <div>
+                                <div class="text-[10px] text-gray-400 font-extrabold uppercase">Monedas de Tienda</div>
+                                <div id="armory-coins" class="font-game text-2xl text-yellow-400">150</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="panel p-5 mb-8 border-sky-500/40 bg-[#131822]">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="font-game text-lg text-sky-400 uppercase"><i class="fa-solid fa-layer-group mr-2"></i>Tu Loadout Equipado (<span id="armory-eq-count">1</span>/5)</h3>
+                        </div>
+                        <div class="grid grid-cols-2 sm:grid-cols-5 gap-4" id="armory-loadout"></div>
+                    </div>
+
+                    <h3 class="font-game text-2xl text-white mb-4 uppercase"><i class="fa-solid fa-store text-yellow-400 mr-2"></i>Catálogo (15 Unidades)</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5 pb-12" id="armory-catalog"></div>
+                </div>
+
+                <!-- 3. LEADERBOARD TAB (DUAL LEADERBOARDS REALES) -->
+                <div id="tab-leaderboard" class="tab-section max-w-6xl mx-auto pb-16">
+                    <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
+                        <div>
+                            <h2 class="font-game text-4xl text-white mb-1"><i class="fa-solid fa-trophy text-yellow-400 mr-2"></i>Clasificación Real</h2>
+                            <p class="text-gray-300 text-sm">
+                                Solo jugadores registrados. Compite globalmente.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="panel p-5 border-2 border-yellow-500/40 flex flex-col">
+                            <div class="flex items-center justify-between border-b border-[#262c3a] pb-3 mb-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-11 h-11 rounded-2xl bg-yellow-500/20 border border-yellow-400 flex items-center justify-center text-yellow-400 text-xl">
+                                        <i class="fa-solid fa-coins"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-game text-2xl text-yellow-400">TOP MÁS MONEDAS</h3>
+                                    </div>
+                                </div>
+                                <span id="lb-my-coins-rank" class="bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 px-3 py-1 rounded-full font-game text-xs">Tu Rango: #--</span>
+                            </div>
+                            <div id="leaderboard-coins-list" class="space-y-2.5 flex-1"></div>
+                        </div>
+
+                        <div class="panel p-5 border-2 border-cyan-500/40 flex flex-col">
+                            <div class="flex items-center justify-between border-b border-[#262c3a] pb-3 mb-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-11 h-11 rounded-2xl bg-cyan-500/20 border border-cyan-400 flex items-center justify-center text-cyan-300 text-xl">
+                                        <i class="fa-solid fa-water"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-game text-2xl text-cyan-300">TOP OLEADA MÁS LEJANA</h3>
+                                    </div>
+                                </div>
+                                <span id="lb-my-wave-rank" class="bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-3 py-1 rounded-full font-game text-xs">Tu Rango: #--</span>
+                            </div>
+                            <div id="leaderboard-waves-list" class="space-y-2.5 flex-1"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. CO-OP TAB REAL -->
+                <div id="tab-coop" class="tab-section max-w-4xl mx-auto pt-8">
+                    
+                    <!-- Vista Inicial -->
+                    <div id="coop-view-init" class="panel p-8 max-w-md mx-auto text-center border-sky-500/40">
+                        <i class="fa-solid fa-users text-6xl text-sky-400 mb-4"></i>
+                        <h2 class="font-game text-3xl mb-2">SALA MULTIJUGADOR</h2>
+                        <p class="text-sm text-gray-300 mb-6">Crea una sala y sé el líder (eliges el modo), o únete a la sala de tu amigo con su código de 4 dígitos.</p>
+                        
+                        <div class="space-y-4">
+                            <button onclick="CoopManager.createRoom()" class="btn btn-blue w-full py-4 text-lg">
+                                <i class="fa-solid fa-plus-circle"></i> CREAR SALA (SER LÍDER)
+                            </button>
+                            <div class="flex items-center gap-4"><div class="flex-1 h-px bg-gray-700"></div><span class="text-gray-500 font-bold text-xs">O ÚNETE CON CÓDIGO</span><div class="flex-1 h-px bg-gray-700"></div></div>
+                            <div class="flex gap-2">
+                                <input id="coop-input" type="text" maxlength="4" placeholder="1234" class="flex-1 bg-[#0e1015] border-2 border-[#262c3a] rounded-xl px-4 text-center font-game text-2xl text-white focus:outline-none focus:border-sky-500">
+                                <button onclick="CoopManager.joinRoom(document.getElementById('coop-input').value.trim())" class="btn btn-green px-6 py-4">UNIRSE</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Vista del Líder (Host) -->
+                    <div id="coop-view-host" class="hidden panel p-8 max-w-xl mx-auto text-center border-yellow-500/50">
+                        <div class="flex justify-between items-center mb-6">
+                            <div class="text-left">
+                                <h2 class="font-game text-2xl text-white">Sala Activa</h2>
+                                <p class="text-sm text-gray-400">Eres el líder. Elige la dificultad.</p>
+                            </div>
+                            <div class="bg-[#0e1015] border-2 border-yellow-500/50 rounded-xl px-4 py-2">
+                                <div class="text-[10px] text-gray-400 font-bold">CÓDIGO PARA UNIRSE</div>
+                                <div id="coop-host-code" class="font-game text-3xl text-yellow-400 tracking-widest mt-1">----</div>
+                            </div>
+                        </div>
+                        
+                        <div id="coop-host-players" class="bg-[#0b0e15] border border-gray-700 rounded-xl p-4 mb-6 text-left">
+                            <div class="text-sm font-bold text-white mb-2"><i class="fa-solid fa-crown text-yellow-400 mr-2"></i> <span id="coop-host-name">Yo</span></div>
+                            <div id="coop-host-status" class="text-sm font-bold text-gray-400 animate-pulse"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Esperando que se una un jugador...</div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 mb-6">
+                            <button id="coop-btn-easy" onclick="CoopManager.setMode('easy')" class="coop-mode-btn btn btn-dark py-3 ring-4 ring-sky-500">Modo Fácil</button>
+                            <button id="coop-btn-medium" onclick="CoopManager.setMode('medium')" class="coop-mode-btn btn btn-dark py-3">Modo Medio</button>
+                            <button id="coop-btn-hard" onclick="CoopManager.setMode('hard')" class="coop-mode-btn btn btn-dark py-3">Modo Difícil</button>
+                            <button id="coop-btn-endless" onclick="CoopManager.setMode('endless')" class="coop-mode-btn btn btn-dark py-3 text-red-400">Modo Endless</button>
+                        </div>
+
+                        <div class="flex gap-3">
+                            <button onclick="CoopManager.leaveRoom()" class="btn btn-red flex-1 py-3">Cerrar Sala</button>
+                            <button id="coop-host-start" disabled onclick="CoopManager.startGame()" class="btn btn-green flex-[2] py-3 text-lg opacity-50 cursor-not-allowed transition">
+                                <i class="fa-solid fa-play"></i> INICIAR PARTIDA
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Vista del Cliente (Jugador Unido) -->
+                    <div id="coop-view-client" class="hidden panel p-8 max-w-xl mx-auto text-center border-sky-500/50">
+                        <i class="fa-solid fa-link text-5xl text-sky-400 mb-4"></i>
+                        <h2 class="font-game text-3xl mb-2">CONECTADO A LA SALA <span id="coop-client-code" class="text-yellow-400"></span></h2>
+                        
+                        <div class="bg-[#0b0e15] border border-gray-700 rounded-xl p-4 mb-6 text-left max-w-sm mx-auto">
+                            <div class="text-sm font-bold text-gray-300 mb-2"><i class="fa-solid fa-crown text-yellow-400 mr-2"></i> Líder: <span id="coop-client-host-name">Cargando...</span></div>
+                            <div class="text-sm font-bold text-white"><i class="fa-solid fa-check text-green-400 mr-2"></i> Tú: <span id="coop-client-name"></span></div>
+                        </div>
+
+                        <p class="text-sky-300 text-lg font-bold animate-pulse mb-6">
+                            <i class="fa-solid fa-clock mr-2"></i> Esperando a que el líder inicie la partida...
+                        </p>
+
+                        <button onclick="CoopManager.leaveRoom()" class="btn btn-red px-6 py-3">Salir de la sala</button>
+                    </div>
+                </div>
+
+                <!-- 5. TRADE TAB -->
+                <div id="tab-trade" class="tab-section max-w-4xl mx-auto pt-8">
+                    <div id="trade-locked" class="panel p-10 max-w-md mx-auto text-center border-yellow-500/40">
+                        <i class="fa-solid fa-lock text-6xl text-yellow-400 mb-4"></i>
+                        <h2 class="font-game text-3xl mb-2">PLAZA DE TRADEO</h2>
+                        <p class="text-gray-300 text-sm mb-6">Necesitas alcanzar el <span class="text-yellow-400 font-bold">Nivel 20</span>.</p>
+                        <button onclick="cheatLevelUp()" class="btn btn-yellow w-full py-3 text-sm">SUBIR +5 NIVELES (PROBAR TRADEO)</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- ==================== IN-GAME HUD ==================== -->
+        <div id="game-ui" class="w-full h-full flex-col justify-between pointer-events-none" style="display: none;">
+            
+            <div class="p-4 flex flex-wrap justify-between items-start gap-4 pointer-events-none w-full">
+                
+                <div class="flex flex-wrap gap-3 pointer-events-none">
+                    <div class="panel px-4 py-2 flex items-center gap-3 bg-[#111722]/90 border-2 border-emerald-500/60 shadow-lg interactive">
+                        <div class="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400 flex items-center justify-center text-emerald-400 text-lg">
+                            <i class="fa-solid fa-dollar-sign"></i>
+                        </div>
+                        <div>
+                            <div class="text-[9px] font-extrabold text-emerald-300 uppercase leading-none mb-1">Efectivo Partida</div>
+                            <div id="ig-cash" class="font-game text-2xl text-emerald-400 leading-none">$650</div>
+                        </div>
+                    </div>
+
+                    <div class="panel px-4 py-2 flex items-center gap-3 bg-[#111722]/90 border-2 border-red-500/50 interactive">
+                        <div class="w-9 h-9 rounded-xl bg-red-500/20 border border-red-400 flex items-center justify-center text-red-400 text-lg">
+                            <i class="fa-solid fa-heart"></i>
+                        </div>
+                        <div>
+                            <div class="text-[9px] font-extrabold text-gray-400 uppercase leading-none mb-1">Salud Base</div>
+                            <div id="ig-hp" class="font-game text-2xl text-white leading-none">100 / 100</div>
+                        </div>
+                    </div>
+
+                    <div id="ig-save-badge" class="save-badge panel px-3.5 py-2 hidden sm:flex items-center gap-2.5 bg-[#111722]/90 border border-yellow-500/40 interactive">
+                        <i class="fa-solid fa-coins text-yellow-400 text-base"></i>
+                        <div>
+                            <div class="text-[9px] font-extrabold text-gray-400 uppercase leading-none mb-0.5">Monedas Tienda</div>
+                            <div id="ig-shop-coins" class="font-game text-sm text-yellow-400 leading-none">150 🪙</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex flex-col items-center pointer-events-none">
+                    <div class="panel px-6 py-2 text-center bg-[#111722]/90 border-2 border-sky-500/50 min-w-[255px] interactive">
+                        <div id="ig-mode-badge" class="text-[9px] font-extrabold text-yellow-400 uppercase tracking-widest mb-0.5">MODO FÁCIL</div>
+                        <div id="ig-wave" class="font-game text-2xl text-white">Oleada 0 / 15</div>
+                        <div id="ig-map-lock-info" class="text-[10px] font-bold text-emerald-300 uppercase">🗺️ Mapa: Bosque Esmeralda</div>
+                    </div>
+                    <button id="btn-next-wave" onclick="startNextWave()" class="btn btn-green py-2 px-6 text-sm mt-2 shadow-xl interactive">
+                        <i class="fa-solid fa-play"></i> INICIAR OLEADA
+                    </button>
+                </div>
+
+                <div class="flex flex-col gap-2 pointer-events-none">
+                    <div class="flex gap-2 interactive">
+                        <button id="btn-speed" onclick="toggleSpeed()" class="btn btn-dark px-3.5 py-2 text-xs w-32 flex justify-between">
+                            <span>Velocidad</span><span id="txt-speed" class="text-yellow-400 font-bold">x1</span>
+                        </button>
+                        <button id="btn-auto" onclick="toggleAuto()" class="btn btn-dark px-3.5 py-2 text-xs w-32 flex justify-between">
+                            <span>Auto Oleada</span><span id="txt-auto" class="text-red-400 font-bold">OFF</span>
+                        </button>
+                    </div>
+                    <div class="flex gap-2 interactive">
+                        <button onclick="resetCameraCenter()" class="btn btn-dark px-3 py-2 text-xs flex-1">
+                            <i class="fa-solid fa-compass"></i> Centrar
+                        </button>
+                        <button onclick="saveAndExitToHub()" class="btn btn-red px-3.5 py-2 text-xs flex-1">
+                            <i class="fa-solid fa-floppy-disk"></i> Guardar y Salir
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side: Tower Upgrade -->
+            <div id="inspector-ui" class="absolute top-28 right-5 w-80 panel flex-col hidden interactive border-2 border-sky-500 bg-[#121620]/95 backdrop-blur-md shadow-2xl z-30">
+                <div class="p-4 border-b border-[#262c3a] flex justify-between items-center bg-[#0b0e15] rounded-t-[16px]">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-400 flex items-center justify-center text-white text-xl">
+                            <i id="insp-icon" class="fa-solid fa-person-rifle"></i>
+                        </div>
+                        <div>
+                            <h3 id="insp-name" class="font-game text-xl text-white leading-none">Scout</h3>
+                            <span id="insp-lvl" class="text-xs font-extrabold text-yellow-400 uppercase tracking-wider">NIVEL 1 / 5</span>
+                        </div>
+                    </div>
+                    <button onclick="closeInspector()" class="text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 w-8 h-8 rounded-lg flex items-center justify-center transition">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+
+                <div class="p-4 space-y-3">
+                    <div class="flex items-center justify-between bg-[#0b0e15] p-2.5 rounded-xl border border-[#262c3a] text-xs">
+                        <span class="text-gray-400 font-bold uppercase"><i class="fa-solid fa-bullseye text-red-400 mr-1"></i> Objetivo:</span>
+                        <button id="insp-target-btn" onclick="cycleTargetMode()" class="bg-sky-500/20 text-sky-300 border border-sky-500/40 px-3 py-1 rounded-lg font-game uppercase transition">
+                            Primero
+                        </button>
+                    </div>
+
+                    <div class="bg-[#0b0e15] rounded-xl p-3 space-y-2 text-xs border border-[#262c3a]">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-400 font-bold"><i class="fa-solid fa-burst w-5 text-red-400"></i> Daño:</span>
+                            <span id="insp-dmg" class="font-extrabold text-white">14</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-400 font-bold"><i class="fa-solid fa-stopwatch w-5 text-sky-400"></i> Cadencia:</span>
+                            <span id="insp-rate" class="font-extrabold text-white">0.75s</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-400 font-bold"><i class="fa-solid fa-ruler-horizontal w-5 text-purple-400"></i> Alcance:</span>
+                            <span id="insp-rng" class="font-extrabold text-white">13m</span>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-2 pt-1">
+                        <button id="btn-upg" onclick="upgradeSelectedTower()" class="btn btn-green w-full py-3 flex justify-between px-4 text-sm">
+                            <span><i class="fa-solid fa-circle-arrow-up mr-1"></i> MEJORAR (E)</span>
+                            <span id="insp-cost" class="bg-black/30 px-2.5 py-0.5 rounded-lg text-white font-extrabold">💵 $150</span>
+                        </button>
+                        <button onclick="sellSelectedTower()" class="btn btn-red w-full py-2.5 flex justify-between px-4 text-xs">
+                            <span><i class="fa-solid fa-sack-dollar mr-1"></i> VENDER (X)</span>
+                            <span id="insp-sell" class="bg-black/30 px-2 py-0.5 rounded-lg text-emerald-200 font-extrabold">+$140</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Bar: Placement -->
+            <div class="pb-5 w-full flex flex-col items-center pointer-events-none">
+                <div id="placement-hint" class="hidden bg-[#0b0e15]/95 px-6 py-2 rounded-full border-2 border-sky-500 text-white text-xs font-bold mb-3 items-center gap-4 shadow-2xl interactive">
+                    <span id="placement-hint-text">Haz clic en el mapa para desplegar</span>
+                    <span class="w-px h-4 bg-gray-600"></span>
+                    <button onclick="cancelPlacement()" class="text-red-400 hover:text-red-300 font-game uppercase"><i class="fa-solid fa-xmark mr-1"></i> Cancelar (ESC)</button>
+                </div>
+
+                <div class="panel p-2.5 flex gap-3 bg-[#10141d]/95 border-[#262c3a] shadow-2xl interactive" id="ig-hotbar"></div>
+            </div>
+        </div>
+
+        <!-- ==================== BACKUP MODAL ==================== -->
+        <div id="backup-modal" class="absolute inset-0 bg-black/80 backdrop-blur-md interactive items-center justify-center z-50" style="display: none;">
+            <div class="panel p-7 max-w-md w-full border-2 border-sky-500">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-game text-2xl text-white"><i class="fa-solid fa-floppy-disk text-sky-400 mr-2"></i>Respaldo</h3>
+                    <button onclick="closeBackupModal()" class="text-gray-400 hover:text-white text-xl"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="mb-4">
+                    <label class="text-[10px] font-extrabold text-sky-400 uppercase">Tu Código de Guardado:</label>
+                    <div class="flex gap-2 mt-1">
+                        <input id="backup-export-input" type="text" readonly class="flex-1 bg-[#0b0e15] border border-gray-700 rounded-xl px-3 py-2 text-xs text-gray-300 font-mono">
+                        <button onclick="copyBackupCode()" class="btn btn-blue px-4 py-2 text-xs">Copiar</button>
+                    </div>
+                </div>
+                <div class="border-t border-gray-800 pt-4">
+                    <label class="text-[10px] font-extrabold text-emerald-400 uppercase">Cargar Código:</label>
+                    <div class="flex gap-2 mt-1">
+                        <input id="backup-import-input" type="text" placeholder="Pega aquí tu código..." class="flex-1 bg-[#0b0e15] border border-gray-700 rounded-xl px-3 py-2 text-xs text-white font-mono">
+                        <button onclick="importBackupCode()" class="btn btn-green px-4 py-2 text-xs">Cargar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== END GAME MODAL ==================== -->
+        <div id="end-screen" class="absolute inset-0 bg-black/85 backdrop-blur-md interactive items-center justify-center z-50" style="display: none;">
+            <div class="panel p-8 max-w-md w-full text-center border-t-8" id="end-panel">
+                <i id="end-icon" class="fa-solid fa-trophy text-7xl mb-4 text-yellow-400"></i>
+                <h2 id="end-title" class="font-game text-4xl mb-2 text-white">¡VICTORIA!</h2>
+                <p id="end-desc" class="text-gray-300 mb-6 text-sm"></p>
+                
+                <div class="bg-[#0b0e15] border border-[#262c3a] rounded-xl p-4 mb-6 space-y-3 text-left text-sm">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400 font-bold">Oleadas Superadas:</span>
+                        <span id="end-waves" class="font-game text-white text-lg">15 / 15</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400 font-bold">Récord de Ola:</span>
+                        <span id="end-best-wave" class="font-game text-cyan-300 text-lg">Ola 15 🌊</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400 font-bold">Monedas Ganadas:</span>
+                        <span id="end-coins" class="font-game text-yellow-400 text-xl">+100 🪙</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-400 font-bold">Experiencia:</span>
+                        <span id="end-xp" class="font-game text-sky-400 text-lg">+180 XP</span>
+                    </div>
+                </div>
+
+                <div class="flex gap-3">
+                    <button onclick="returnToHubAfterEnd('tab-leaderboard')" class="btn btn-yellow flex-1 py-3.5 text-sm">
+                        VER RANKING
+                    </button>
+                    <button onclick="returnToHubAfterEnd('tab-armory')" class="btn btn-blue flex-1 py-3.5 text-sm">
+                        IR A ARMERÍA
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+<script>
+// ==========================================
+// 1. MAPAS Y DATOS
+// ==========================================
+const MAPS_DB = [
+    { id: 0, name: 'Bosque Esmeralda', icon: 'fa-tree', badgeColor: 'text-emerald-300 border-emerald-400 bg-emerald-500/20', skyColor: 0x0b0f17, groundColor1: '#182c1f', groundColor2: '#1e3626', roadColor: 0x1e293b, neonColor: 0x00d4ff, cliffRockColor: 0x475569, cliffTopColor: 0x22c55e, portalColor: 0xa855f7, baseColor: 0x1d4ed8, decorType: 'pine', pathNodes: [ new THREE.Vector3(-42, 0, -22), new THREE.Vector3(-14, 0, -22), new THREE.Vector3(-14, 0, 14), new THREE.Vector3(16, 0, 14), new THREE.Vector3(16, 0, -18), new THREE.Vector3(42, 0, -18) ], cliffs: [ { x: -30, z: -5, tiers: 3, baseW: 12.5 }, { x: 1, z: 25, tiers: 3, baseW: 13.5 }, { x: 31, z: -2, tiers: 3, baseW: 12.5 } ] },
+    { id: 1, name: 'Desierto Cañón', icon: 'fa-sun', badgeColor: 'text-amber-300 border-amber-400 bg-amber-500/20', skyColor: 0x1a120b, groundColor1: '#422c18', groundColor2: '#4d341c', roadColor: 0x2b2118, neonColor: 0xffaa00, cliffRockColor: 0x9a3412, cliffTopColor: 0xd97706, portalColor: 0xf59e0b, baseColor: 0xb45309, decorType: 'cactus', pathNodes: [ new THREE.Vector3(-42, 0, 18), new THREE.Vector3(-18, 0, 18), new THREE.Vector3(-18, 0, -20), new THREE.Vector3(18, 0, -20), new THREE.Vector3(18, 0, 16), new THREE.Vector3(42, 0, 16) ], cliffs: [ { x: -32, z: -4, tiers: 3, baseW: 12.5 }, { x: 0, z: -4, tiers: 3, baseW: 13.0 }, { x: 32, z: -6, tiers: 3, baseW: 12.5 } ] },
+    { id: 2, name: 'Tundra Glacial', icon: 'fa-snowflake', badgeColor: 'text-cyan-300 border-cyan-400 bg-cyan-500/20', skyColor: 0x09131c, groundColor1: '#1e2f3d', groundColor2: '#25394a', roadColor: 0x0f172a, neonColor: 0x38bdf8, cliffRockColor: 0x64748b, cliffTopColor: 0xe0f2fe, portalColor: 0x06b6d4, baseColor: 0x0284c7, decorType: 'snowpine', pathNodes: [ new THREE.Vector3(-42, 0, -16), new THREE.Vector3(0, 0, -16), new THREE.Vector3(0, 0, 20), new THREE.Vector3(26, 0, 20), new THREE.Vector3(26, 0, -22), new THREE.Vector3(44, 0, -22) ], cliffs: [ { x: -20, z: 6, tiers: 3, baseW: 13.0 }, { x: 13, z: -2, tiers: 3, baseW: 12.5 }, { x: -16, z: -28, tiers: 3, baseW: 12.5 } ] },
+    { id: 3, name: 'Volcán Obsidiana', icon: 'fa-fire-flame-curved', badgeColor: 'text-red-400 border-red-500 bg-red-500/20', skyColor: 0x160707, groundColor1: '#1f1215', groundColor2: '#29171b', roadColor: 0x111115, neonColor: 0xff3b3b, cliffRockColor: 0x27272a, cliffTopColor: 0xdc2626, portalColor: 0xef4444, baseColor: 0x991b1b, decorType: 'lava', pathNodes: [ new THREE.Vector3(-42, 0, 0), new THREE.Vector3(-20, 0, 0), new THREE.Vector3(-20, 0, -22), new THREE.Vector3(14, 0, -22), new THREE.Vector3(14, 0, 18), new THREE.Vector3(42, 0, 18) ], cliffs: [ { x: -4, z: -4, tiers: 3, baseW: 13.0 }, { x: -32, z: 18, tiers: 3, baseW: 12.5 }, { x: 30, z: -4, tiers: 3, baseW: 12.5 } ] }
+];
+
+function getCurrentHourlyMapIndex() { return Math.floor(Date.now() / 3600000) % MAPS_DB.length; }
+
+const TOWER_DB = {
+    scout: { name: 'Scout', role: 'Pistola Rápida Inicial', shopCost: 150, placeCost: 200, damage: 14, rate: 0.75, range: 13, cliff: false, color: 0x0088ff, hatColor: 0x0044aa, icon: 'fa-person-rifle' },
+    sniper: { name: 'Sniper', role: 'Francotirador Montaña', shopCost: 200, placeCost: 300, damage: 55, rate: 2.0, range: 32, cliff: true, color: 0x8b5cf6, hatColor: 0x4c1d95, icon: 'fa-crosshairs' },
+    demoman: { name: 'Demoman', role: 'Granadas en Área', shopCost: 250, placeCost: 375, damage: 40, rate: 1.5, range: 13, aoe: 5.5, cliff: false, color: 0xf97316, hatColor: 0x9a3412, icon: 'fa-bomb' },
+    farm: { name: 'Farm', role: 'Genera +Efectivo', shopCost: 300, placeCost: 250, damage: 0, rate: 0, range: 6, isFarm: true, cliff: false, color: 0xeab308, hatColor: 0x713f12, icon: 'fa-wheat-awn' },
+    militant: { name: 'Militant', role: 'Ráfagas Constantes', shopCost: 350, placeCost: 400, damage: 24, rate: 0.35, range: 16, cliff: false, color: 0x22c55e, hatColor: 0x14532d, icon: 'fa-person-military-pointing' },
+    shotgunner: { name: 'Shotgunner', role: 'Escopeta Área', shopCost: 400, placeCost: 425, damage: 45, rate: 0.95, range: 9, aoe: 3.5, cliff: false, color: 0x64748b, hatColor: 0x1e293b, icon: 'fa-gun' },
+    freezer: { name: 'Freezer', role: 'Criogénico', shopCost: 450, placeCost: 400, damage: 22, rate: 0.7, range: 13, slows: true, cliff: false, color: 0x38bdf8, hatColor: 0x0284c7, icon: 'fa-snowflake' },
+    pyro: { name: 'Pyromancer', role: 'Lanzallamas', shopCost: 500, placeCost: 475, damage: 15, rate: 0.2, range: 10, aoe: 4.0, slows: true, cliff: false, color: 0xef4444, hatColor: 0x7f1d1d, icon: 'fa-fire-burner' },
+    medic: { name: 'Medic', role: 'Cura la Base', shopCost: 600, placeCost: 500, damage: 28, rate: 0.55, range: 14, isMedic: true, cliff: false, color: 0xf43f5e, hatColor: 0xffffff, icon: 'fa-suitcase-medical' },
+    crookboss: { name: 'Crook Boss', role: 'Jefe Mafioso', shopCost: 650, placeCost: 600, damage: 42, rate: 0.45, range: 15, cliff: false, color: 0x334155, hatColor: 0x0f172a, icon: 'fa-user-tie' },
+    commander: { name: 'Commander', role: 'Líder de Apoyo', shopCost: 750, placeCost: 700, damage: 58, rate: 0.6, range: 18, cliff: false, color: 0x3b82f6, hatColor: 0x1d4ed8, icon: 'fa-bullhorn' },
+    dj: { name: 'DJ Booth', role: 'Onda Sónica', shopCost: 800, placeCost: 750, damage: 35, rate: 0.5, range: 17, aoe: 5.0, cliff: false, color: 0xec4899, hatColor: 0x831843, icon: 'fa-headphones' },
+    minigunner: { name: 'Minigunner', role: 'Gatling Extrema', shopCost: 1000, placeCost: 1200, damage: 24, rate: 0.11, range: 16, cliff: false, color: 0xf59e0b, hatColor: 0x92400e, icon: 'fa-burst' },
+    ranger: { name: 'Ranger', role: 'Cañón Montaña', shopCost: 1400, placeCost: 1600, damage: 260, rate: 2.4, range: 44, cliff: true, color: 0x9333ea, hatColor: 0x4c1d95, icon: 'fa-vr-cardboard' },
+    accelerator: { name: 'Accelerator', role: 'Plasma Sobrecargado', shopCost: 2200, placeCost: 2200, damage: 52, rate: 0.09, range: 20, cliff: false, color: 0x06b6d4, hatColor: 0x155e75, icon: 'fa-bolt' }
+};
+
+const ENEMY_DB = {
+    normal: { name: 'Zombie', hp: 40, speed: 4.8, cashReward: 25, color: 0x64748b, skin: 0x84cc16, scale: 1.0 },
+    speedy: { name: 'Speedy', hp: 30, speed: 8.2, cashReward: 32, color: 0xfacc15, skin: 0xfef08a, scale: 0.88 },
+    slow:   { name: 'Tank',   hp: 150, speed: 3.1, cashReward: 60, color: 0x334155, skin: 0x64748b, scale: 1.3 },
+    hidden: { name: 'Shadow', hp: 95, speed: 6.2, cashReward: 50, color: 0x4c1d95, skin: 0xa855f7, scale: 1.05 },
+    boss:   { name: 'Grave Boss', hp: 700, speed: 2.2, cashReward: 250, color: 0xdc2626, skin: 0x991b1b, scale: 1.8 }
+};
+
+class SoundEngine {
+    constructor() { this.ctx = null; }
+    init() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); }
+    play(type) {
+        try {
+            this.init(); const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+            osc.connect(gain); gain.connect(this.ctx.destination); const now = this.ctx.currentTime;
+            if (type === 'shoot') { osc.type = 'sawtooth'; osc.frequency.setValueAtTime(300, now); osc.frequency.exponentialRampToValueAtTime(100, now + 0.055); gain.gain.setValueAtTime(0.05, now); gain.gain.linearRampToValueAtTime(0.004, now + 0.055); osc.start(now); osc.stop(now + 0.055); }
+            else if (type === 'place' || type === 'upgrade') { osc.type = 'triangle'; osc.frequency.setValueAtTime(420, now); osc.frequency.exponentialRampToValueAtTime(840, now + 0.14); gain.gain.setValueAtTime(0.11, now); gain.gain.linearRampToValueAtTime(0.01, now + 0.14); osc.start(now); osc.stop(now + 0.14); }
+            else if (type === 'coin' || type === 'buy') { osc.type = 'sine'; osc.frequency.setValueAtTime(587.33, now); osc.frequency.setValueAtTime(880, now + 0.07); gain.gain.setValueAtTime(0.12, now); gain.gain.linearRampToValueAtTime(0.01, now + 0.2); osc.start(now); osc.stop(now + 0.2); }
+            else if (type === 'sell') { osc.type = 'sine'; osc.frequency.setValueAtTime(500, now); osc.frequency.exponentialRampToValueAtTime(240, now + 0.12); gain.gain.setValueAtTime(0.1, now); gain.gain.linearRampToValueAtTime(0.01, now + 0.12); osc.start(now); osc.stop(now + 0.12); }
+        } catch (e) {}
+    }
+}
+const sfx = new SoundEngine();
+
+// ==========================================
+// 2. ESTADO, GUARDADO Y MULTIJUGADOR
+// ==========================================
+const SAVE_STORAGE_KEY = 'tds_roblox_save_v2';
+
+let pData = {
+    hasRegistered: false,
+    playerName: '',
+    shopCoins: 150,
+    highestWave: 0,
+    level: 1,
+    xp: 0,
+    victories: 0,
+    unlocked: ['scout'],
+    loadout: ['scout', null, null, null, null],
+    activeMatch: null,
+    updatedAt: Date.now()
+};
+
+let cloudLeaderboardCache = [];
+
+let gState = {
+    mode: 'hub',
+    difficulty: 'easy',
+    lockedMapId: getCurrentHourlyMapIndex(),
+    renderedMapId: -1,
+    matchCash: 650,
+    hp: 100,
+    wave: 0,
+    maxWave: 15,
+    active: false,
+    speed: 1,
+    auto: false,
+    enemiesQueue: [],
+    spawnTimer: 0,
+    towers: [],
+    enemies: [],
+    projectiles: [],
+    selectedId: null,
+    inspectedTower: null,
+    keys: { w: false, a: false, s: false, d: false },
+    notifiedMapRotationInMatch: false
+};
+
+// Sincronización Cooperativa en tiempo real simulada por LocalStorage para pestañas o conexión base
+const CoopManager = {
+    roomCode: null,
+    isHost: false,
+    pollInterval: null,
+    
+    createRoom() {
+        this.roomCode = Math.floor(1000 + Math.random() * 9000).toString();
+        this.isHost = true;
+        const room = { host: pData.playerName, client: null, status: 'waiting', mode: 'medium', mapId: getCurrentHourlyMapIndex() };
+        localStorage.setItem('coop_room_' + this.roomCode, JSON.stringify(room));
+        
+        document.getElementById('coop-view-init').classList.add('hidden');
+        document.getElementById('coop-view-host').classList.remove('hidden');
+        document.getElementById('coop-host-code').innerText = this.roomCode;
+        document.getElementById('coop-host-name').innerText = pData.playerName;
+        
+        this.setMode('medium');
+        this.startPolling();
+    },
+    
+    joinRoom(code) {
+        if(code.length !== 4) return showToast('❌ Código inválido.');
+        const roomRaw = localStorage.getItem('coop_room_' + code);
+        if (!roomRaw) return showToast('❌ La sala no existe o se ha cerrado.');
+        
+        const room = JSON.parse(roomRaw);
+        if (room.client && room.client !== pData.playerName) return showToast('❌ La sala ya está llena.');
+        
+        room.client = pData.playerName;
+        localStorage.setItem('coop_room_' + code, JSON.stringify(room));
+        
+        this.roomCode = code;
+        this.isHost = false;
+        
+        document.getElementById('coop-view-init').classList.add('hidden');
+        document.getElementById('coop-view-client').classList.remove('hidden');
+        document.getElementById('coop-client-code').innerText = code;
+        document.getElementById('coop-client-host-name').innerText = room.host;
+        document.getElementById('coop-client-name').innerText = pData.playerName;
+        
+        this.startPolling();
+    },
+    
+    startPolling() {
+        if(this.pollInterval) clearInterval(this.pollInterval);
+        this.pollInterval = setInterval(() => this.checkRoom(), 1000);
+    },
+    
+    checkRoom() {
+        if (!this.roomCode) return;
+        const roomRaw = localStorage.getItem('coop_room_' + this.roomCode);
+        if (!roomRaw) {
+            this.leaveRoom(true);
+            return showToast('❌ La sala ha sido cerrada.');
+        }
+        
+        const room = JSON.parse(roomRaw);
+        
+        if (this.isHost) {
+            if (room.client && room.status === 'waiting') {
+                document.getElementById('coop-host-status').innerHTML = '<i class="fa-solid fa-check text-green-400 mr-2"></i> Jugador Unido: ' + room.client;
+                document.getElementById('coop-host-start').disabled = false;
+                document.getElementById('coop-host-start').classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        } else {
+            if (room.status === 'starting') {
+                showToast('🎮 ¡El líder ha iniciado la partida!', true);
+                this.finishAndPlay(room.mode, room.mapId);
+            }
+        }
+    },
+    
+    setMode(mode) {
+        if (!this.isHost) return;
+        const roomRaw = localStorage.getItem('coop_room_' + this.roomCode);
+        if(!roomRaw) return;
+        const room = JSON.parse(roomRaw);
+        room.mode = mode;
+        localStorage.setItem('coop_room_' + this.roomCode, JSON.stringify(room));
+        
+        document.querySelectorAll('.coop-mode-btn').forEach(btn => btn.classList.remove('ring-4', 'ring-sky-500'));
+        document.getElementById('coop-btn-' + mode).classList.add('ring-4', 'ring-sky-500');
+    },
+    
+    startGame() {
+        if (!this.isHost) return;
+        const roomRaw = localStorage.getItem('coop_room_' + this.roomCode);
+        const room = JSON.parse(roomRaw);
+        room.status = 'starting';
+        localStorage.setItem('coop_room_' + this.roomCode, JSON.stringify(room));
+        this.finishAndPlay(room.mode, room.mapId);
+    },
+    
+    finishAndPlay(mode, mapId) {
+        clearInterval(this.pollInterval);
+        startGame(mode, mapId); // Pasa mapId forzado para estar sincronizados
+    },
+    
+    leaveRoom(forced = false) {
+        if (this.isHost && this.roomCode) localStorage.removeItem('coop_room_' + this.roomCode);
+        this.roomCode = null;
+        this.isHost = false;
+        clearInterval(this.pollInterval);
+        
+        document.getElementById('coop-view-host').classList.add('hidden');
+        document.getElementById('coop-view-client').classList.add('hidden');
+        document.getElementById('coop-view-init').classList.remove('hidden');
+        
+        document.getElementById('coop-host-start').disabled = true;
+        document.getElementById('coop-host-start').classList.add('opacity-50', 'cursor-not-allowed');
+        document.getElementById('coop-host-status').innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Esperando que se una un jugador...';
+        
+        if(!forced) showToast('Has abandonado la sala.');
+    }
+};
+
+window.addEventListener('beforeunload', () => { CoopManager.leaveRoom(true); saveAllProgress(); });
+
+function serializeCurrentMatch() {
+    if (gState.mode !== 'game' || gState.hp <= 0) return null;
+    return {
+        difficulty: gState.difficulty, lockedMapId: gState.lockedMapId, wave: gState.wave, maxWave: gState.maxWave, matchCash: gState.matchCash, hp: gState.hp, speed: gState.speed, auto: gState.auto,
+        towers: gState.towers.map(t => ({ type: t.type, x: parseFloat(t.mesh.position.x.toFixed(2)), y: parseFloat(t.mesh.position.y.toFixed(2)), z: parseFloat(t.mesh.position.z.toFixed(2)), level: t.level, invested: t.invested, kills: t.kills, targetMode: t.targetMode }))
+    };
+}
+
+function flashSaveIndicator() {
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const timeEl = document.getElementById('hub-save-time');
+    if (timeEl) timeEl.innerText = timeStr;
+    ['hub-save-badge', 'ig-save-badge'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.classList.add('saving'); setTimeout(() => el.classList.remove('saving'), 650); }
+    });
+}
+
+function saveAllProgress() {
+    if (!pData.hasRegistered) return; // No guardar si no se ha registrado
+    try {
+        if (gState.mode === 'game' && gState.hp > 0) pData.activeMatch = serializeCurrentMatch();
+        pData.updatedAt = Date.now();
+        const rawJson = JSON.stringify(pData);
+        localStorage.setItem(SAVE_STORAGE_KEY, rawJson);
+        if (window.CloudStorage) window.CloudStorage.save(pData).catch(() => {});
+        flashSaveIndicator();
+        updateResumeMatchBanner();
+    } catch (e) {}
+}
+
+function loadSavedProgress() {
+    try {
+        const raw = localStorage.getItem(SAVE_STORAGE_KEY);
+        if (raw) applyLoadedData(JSON.parse(raw));
+    } catch (e) {}
+}
+
+function applyLoadedData(parsed) {
+    if (!parsed || typeof parsed !== 'object') return;
+    if (parsed.hasRegistered) pData.hasRegistered = true;
+    if (typeof parsed.playerName === 'string' && parsed.playerName.trim()) pData.playerName = parsed.playerName.trim().slice(0, 16);
+    if (typeof parsed.shopCoins === 'number') pData.shopCoins = parsed.shopCoins;
+    if (typeof parsed.highestWave === 'number') pData.highestWave = Math.max(pData.highestWave, parsed.highestWave);
+    pData.level = parsed.level || 1;
+    pData.xp = parsed.xp || 0;
+    pData.victories = parsed.victories || 0;
+    if (Array.isArray(parsed.unlocked) && parsed.unlocked.length > 0) pData.unlocked = parsed.unlocked.filter(k => TOWER_DB[k]);
+    if (Array.isArray(parsed.loadout) && parsed.loadout.length === 5) pData.loadout = parsed.loadout.map(k => (k && TOWER_DB[k] ? k : null));
+    pData.activeMatch = parsed.activeMatch || null;
+}
+
+window.onCloudReady = async function() {
+    if (!window.CloudStorage) return;
+    const cloudData = await window.CloudStorage.load();
+    if (cloudData && (!pData.updatedAt || (cloudData.updatedAt && cloudData.updatedAt > pData.updatedAt))) {
+        applyLoadedData(cloudData);
+        checkFirstTimeLogin();
+        updateUIStats();
+        renderArmory();
+        updateResumeMatchBanner();
+    }
+    refreshCloudLeaderboards().then(() => renderLeaderboards());
+};
+
+setInterval(() => { if (gState.mode === 'game') saveAllProgress(); }, 5000);
+
+function checkFirstTimeLogin() {
+    if (!pData.hasRegistered || pData.playerName === '' || pData.playerName.startsWith('Comandante_')) {
+        document.getElementById('welcome-modal').style.display = 'flex';
+        document.getElementById('hub-ui').style.display = 'none';
+        document.getElementById('game-ui').style.display = 'none';
+    } else {
+        document.getElementById('welcome-modal').style.display = 'none';
+        document.getElementById('hub-ui').style.display = 'flex';
+        updateUIStats();
+    }
+}
+
+function registerFirstTime() {
+    const input = document.getElementById('welcome-name').value.trim();
+    if (input.length < 3) return showToast('❌ El nombre debe tener al menos 3 caracteres.');
+    pData.playerName = input.slice(0, 16);
+    pData.hasRegistered = true;
+    saveAllProgress();
+    document.getElementById('welcome-modal').style.display = 'none';
+    document.getElementById('hub-ui').style.display = 'flex';
+    updateUIStats();
+    renderLeaderboards();
+    showToast(`✅ ¡Bienvenido/a a la base, ${pData.playerName}!`, true);
+}
+
+
+// ==========================================
+// 3. CLASIFICACIÓN MUNDIAL SIN BOTS
+// ==========================================
+async function refreshCloudLeaderboards() {
+    if (window.CloudStorage) {
+        try {
+            const list = await window.CloudStorage.fetchLeaderboards();
+            if (Array.isArray(list)) cloudLeaderboardCache = list;
+        } catch (e) {}
+    }
+}
+
+function getMergedLeaderboardEntries() {
+    const mapByUid = new Map();
+    // NO MÁS BOTS PREDETERMINADOS. Solo gente registrada (CloudCache o Tú mismo)
+    cloudLeaderboardCache.forEach(p => {
+        if (p && p.uid && p.name && p.name !== '') {
+            mapByUid.set(p.uid, { uid: p.uid, name: p.name, shopCoins: Number(p.shopCoins || 0), highestWave: Number(p.highestWave || 0), level: Number(p.level || 1) });
+        }
+    });
+
+    if (pData.hasRegistered) {
+        const myUid = window.CloudStorage ? window.CloudStorage.uid() : 'local-me';
+        mapByUid.set(myUid, { uid: myUid, name: pData.playerName, shopCoins: pData.shopCoins, highestWave: pData.highestWave, level: pData.level, isMe: true });
+    }
+
+    return Array.from(mapByUid.values());
+}
+
+function renderLeaderboards() {
+    const allPlayers = getMergedLeaderboardEntries();
+    if(allPlayers.length === 0) return;
+
+    const byCoins = [...allPlayers].sort((a, b) => b.shopCoins - a.shopCoins);
+    const myCoinsRank = byCoins.findIndex(p => p.isMe) + 1;
+    document.getElementById('lb-my-coins-rank').innerText = myCoinsRank > 0 ? `Tu Rango: #${myCoinsRank}` : 'Tu Rango: No Registrado';
+
+    const coinsContainer = document.getElementById('leaderboard-coins-list');
+    coinsContainer.innerHTML = '';
+    byCoins.slice(0, 10).forEach((p, idx) => {
+        const rank = idx + 1;
+        const rowCls = rank === 1 ? 'rank-1' : (rank === 2 ? 'rank-2' : (rank === 3 ? 'rank-3' : 'bg-[#0e121a] border-[#262c3a]'));
+        coinsContainer.innerHTML += `
+            <div class="flex items-center justify-between px-4 py-2.5 rounded-xl border-2 ${rowCls} ${p.isMe ? 'rank-me' : ''} transition">
+                <div class="flex items-center gap-3">
+                    <span class="font-game text-base w-8 text-center ${rank <= 3 ? 'text-yellow-300 text-lg' : 'text-gray-400'}">#${rank}</span>
+                    <div>
+                        <div class="font-game text-sm ${p.isMe ? 'text-sky-300' : 'text-white'} flex items-center gap-2">
+                            <span>${p.name}</span>
+                            ${p.isMe ? '<span class="text-[9px] bg-sky-500/30 border border-sky-400 text-sky-200 px-1.5 py-0.2 rounded">TÚ</span>' : ''}
+                        </div>
+                        <div class="text-[10px] text-gray-400 font-bold">Nivel ${p.level} • Récord: Ola ${p.highestWave}</div>
+                    </div>
+                </div>
+                <div class="font-game text-lg text-yellow-400">${p.shopCoins.toLocaleString()} 🪙</div>
+            </div>
+        `;
+    });
+
+    const byWaves = [...allPlayers].sort((a, b) => b.highestWave - a.highestWave || b.shopCoins - a.shopCoins);
+    const myWaveRank = byWaves.findIndex(p => p.isMe) + 1;
+    document.getElementById('lb-my-wave-rank').innerText = myWaveRank > 0 ? `Tu Rango: #${myWaveRank}` : 'Tu Rango: No Registrado';
+
+    const wavesContainer = document.getElementById('leaderboard-waves-list');
+    wavesContainer.innerHTML = '';
+    byWaves.slice(0, 10).forEach((p, idx) => {
+        const rank = idx + 1;
+        const rowCls = rank === 1 ? 'rank-1' : (rank === 2 ? 'rank-2' : (rank === 3 ? 'rank-3' : 'bg-[#0e121a] border-[#262c3a]'));
+        wavesContainer.innerHTML += `
+            <div class="flex items-center justify-between px-4 py-2.5 rounded-xl border-2 ${rowCls} ${p.isMe ? 'rank-me' : ''} transition">
+                <div class="flex items-center gap-3">
+                    <span class="font-game text-base w-8 text-center ${rank <= 3 ? 'text-yellow-300 text-lg' : 'text-gray-400'}">#${rank}</span>
+                    <div>
+                        <div class="font-game text-sm ${p.isMe ? 'text-sky-300' : 'text-white'} flex items-center gap-2">
+                            <span>${p.name}</span>
+                            ${p.isMe ? '<span class="text-[9px] bg-sky-500/30 border border-sky-400 text-sky-200 px-1.5 py-0.2 rounded">TÚ</span>' : ''}
+                        </div>
+                        <div class="text-[10px] text-gray-400 font-bold">Nivel ${p.level} • Monedas: ${p.shopCoins.toLocaleString()} 🪙</div>
+                    </div>
+                </div>
+                <div class="font-game text-lg text-cyan-300">Ola ${p.highestWave} 🌊</div>
+            </div>
+        `;
+    });
+}
+
+
+// ==========================================
+// 4. THREE.JS Y MAPAS
+// ==========================================
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b0f17); scene.fog = new THREE.FogExp2(0x0b0f17, 0.0042);
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+renderer.setSize(window.innerWidth, window.innerHeight); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.getElementById('canvas-container').appendChild(renderer.domElement);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08; controls.screenSpacePanning = false; controls.minDistance = 24; controls.maxDistance = 95; controls.minPolarAngle = Math.PI / 3.3; controls.maxPolarAngle = Math.PI / 3.3; controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+
+function resetCameraCenter() { controls.target.set(0, 0, -2); camera.position.set(0, 52, 58); controls.update(); }
+resetCameraCenter();
+function clampCameraPanBounds() { controls.target.x = Math.max(-52, Math.min(52, controls.target.x)); controls.target.z = Math.max(-42, Math.min(38, controls.target.z)); controls.target.y = 0; }
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+dirLight.position.set(45, 85, 50); dirLight.castShadow = true; dirLight.shadow.mapSize.width = 1024; dirLight.shadow.mapSize.height = 1024; dirLight.shadow.camera.left = -65; dirLight.shadow.camera.right = 65; dirLight.shadow.camera.top = 65; dirLight.shadow.camera.bottom = -65; scene.add(dirLight);
+
+const raycaster = new THREE.Raycaster(); const mouse = new THREE.Vector2(); const clock = new THREE.Clock();
+const mapEnvironmentGroup = new THREE.Group(); scene.add(mapEnvironmentGroup);
+
+let activePathNodes = MAPS_DB[0].pathNodes; let groundPlane, cliffColliders = []; let placementIndicator, rangeRing;
+
+placementIndicator = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 2.2, 20), new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.45 })); placementIndicator.visible = false; scene.add(placementIndicator);
+rangeRing = new THREE.Mesh(new THREE.RingGeometry(0.88, 1.0, 48), new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.45, side: THREE.DoubleSide })); rangeRing.rotateX(-Math.PI / 2); rangeRing.visible = false; scene.add(rangeRing);
+
+function distToSegment(p, v, w) { const l2 = v.distanceToSquared(w); if (l2 === 0) return p.distanceTo(v); let t = ((p.x - v.x) * (w.x - v.x) + (p.z - v.z) * (w.z - v.z)) / l2; t = Math.max(0, Math.min(1, t)); const proj = new THREE.Vector3(v.x + t * (w.x - v.x), 0, v.z + t * (w.z - v.z)); return p.distanceTo(proj); }
+
+function buildMapEnvironmentById(mapId) {
+    const mapCfg = MAPS_DB[mapId] || MAPS_DB[0];
+    gState.renderedMapId = mapCfg.id; activePathNodes = mapCfg.pathNodes;
+    while (mapEnvironmentGroup.children.length > 0) mapEnvironmentGroup.remove(mapEnvironmentGroup.children[0]);
+    cliffColliders = []; scene.background = new THREE.Color(mapCfg.skyColor); scene.fog = new THREE.FogExp2(mapCfg.skyColor, 0.0042);
+
+    const texCanvas = document.createElement('canvas'); texCanvas.width = 128; texCanvas.height = 128; const ctx = texCanvas.getContext('2d'); ctx.fillStyle = mapCfg.groundColor1; ctx.fillRect(0, 0, 128, 128); ctx.fillStyle = mapCfg.groundColor2; ctx.fillRect(0, 0, 64, 64); ctx.fillRect(64, 64, 64, 64); const tex = new THREE.CanvasTexture(texCanvas); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(32, 32);
+    groundPlane = new THREE.Mesh(new THREE.PlaneGeometry(260, 260).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 })); groundPlane.receiveShadow = true; mapEnvironmentGroup.add(groundPlane);
+
+    const roadMat = new THREE.MeshStandardMaterial({ color: mapCfg.roadColor, roughness: 0.85 }), neonMat = new THREE.MeshBasicMaterial({ color: mapCfg.neonColor }), roadWidth = 7.0;
+    for (let i = 0; i < activePathNodes.length - 1; i++) {
+        const p1 = activePathNodes[i], p2 = activePathNodes[i + 1], cx = (p1.x + p2.x) / 2, cz = (p1.z + p2.z) / 2, dx = Math.abs(p2.x - p1.x), dz = Math.abs(p2.z - p1.z);
+        const roadSlab = new THREE.Mesh(new THREE.BoxGeometry(dx > 0 ? dx + roadWidth : roadWidth, 0.12, dz > 0 ? dz + roadWidth : roadWidth), roadMat); roadSlab.position.set(cx, 0.06, cz); roadSlab.receiveShadow = true; mapEnvironmentGroup.add(roadSlab);
+        if (dx > 0) { const railTop = new THREE.Mesh(new THREE.BoxGeometry(dx + roadWidth, 0.18, 0.28), neonMat); railTop.position.set(cx, 0.12, cz - roadWidth / 2); const railBot = new THREE.Mesh(new THREE.BoxGeometry(dx + roadWidth, 0.18, 0.28), neonMat); railBot.position.set(cx, 0.12, cz + roadWidth / 2); mapEnvironmentGroup.add(railTop, railBot); }
+        else { const railLeft = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, dz + roadWidth), neonMat); railLeft.position.set(cx - roadWidth / 2, 0.12, cz); const railRight = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, dz + roadWidth), neonMat); railRight.position.set(cx + roadWidth / 2, 0.12, cz); mapEnvironmentGroup.add(railLeft, railRight); }
+    }
+
+    mapCfg.cliffs.forEach(cData => {
+        const group = new THREE.Group(); const rockM = new THREE.MeshStandardMaterial({ color: mapCfg.cliffRockColor, roughness: 0.85 }); const topM = new THREE.MeshStandardMaterial({ color: mapCfg.cliffTopColor, roughness: 0.7 }); let hTotal = 0;
+        for (let i = 0; i < cData.tiers; i++) { const w = cData.baseW - (i * 2.4), h = 2.4, yC = hTotal + (h / 2); const r = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), rockM); r.position.y = yC; r.castShadow = true; r.receiveShadow = true; group.add(r); const g = new THREE.Mesh(new THREE.BoxGeometry(w + 0.2, 0.35, w + 0.2), topM); g.position.y = yC + (h / 2); g.receiveShadow = true; group.add(g); hTotal += h; }
+        const topWidth = cData.baseW - ((cData.tiers - 1) * 2.4); const col = new THREE.Mesh(new THREE.BoxGeometry(topWidth, hTotal + 0.4, topWidth), new THREE.MeshBasicMaterial({ visible: false })); col.position.y = hTotal / 2; col.userData.isCliff = true; col.userData.topY = hTotal + 0.2; group.add(col); cliffColliders.push(col); group.position.set(cData.x, 0, cData.z); mapEnvironmentGroup.add(group);
+    });
+
+    for (let i = 0; i < 38; i++) {
+        const angle = (i / 38) * Math.PI * 2 + 0.08, radius = 45 + (i % 4) * 6, p = new THREE.Vector3(Math.cos(angle) * radius * 1.22, 0, Math.sin(angle) * radius * 0.85);
+        let nearRoad = false; for (let j = 0; j < activePathNodes.length - 1; j++) if (distToSegment(p, activePathNodes[j], activePathNodes[j + 1]) < 14) { nearRoad = true; break; } if (nearRoad) continue;
+        const prop = new THREE.Group();
+        if (mapCfg.decorType === 'cactus') { const cM = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.8 }); const m = new THREE.Mesh(new THREE.BoxGeometry(0.9, 3.6, 0.9), cM); m.position.y = 1.8; m.castShadow = true; const aL = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.6), cM); aL.position.set(-0.8, 2.0, 0); const aR = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.6), cM); aR.position.set(0.8, 2.4, 0); prop.add(m, aL, aR); }
+        else if (mapCfg.decorType === 'snowpine') { const sM = new THREE.MeshStandardMaterial({ color: 0xe0f2fe, flatShading: true }), iM = new THREE.MeshStandardMaterial({ color: 0x38bdf8, flatShading: true }); const c1 = new THREE.Mesh(new THREE.ConeGeometry(2.2, 3.2, 6), iM); c1.position.y = 1.8; c1.castShadow = true; const c2 = new THREE.Mesh(new THREE.ConeGeometry(1.7, 2.6, 6), sM); c2.position.y = 3.5; c2.castShadow = true; prop.add(c1, c2); }
+        else if (mapCfg.decorType === 'lava') { const cM = new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x991b1b, emissiveIntensity: 0.6, flatShading: true }); const b = new THREE.Mesh(new THREE.DodecahedronGeometry(1.4), new THREE.MeshStandardMaterial({ color: 0x27272a })); b.position.y = 0.8; const s = new THREE.Mesh(new THREE.ConeGeometry(0.9, 3.4, 5), cM); s.position.y = 2.1; prop.add(b, s); }
+        else { const dM = new THREE.MeshStandardMaterial({ color: 0x14532d, flatShading: true }), lM = new THREE.MeshStandardMaterial({ color: 0x166534, flatShading: true }); const c1 = new THREE.Mesh(new THREE.ConeGeometry(2.2, 3.2, 6), dM); c1.position.y = 1.9; c1.castShadow = true; const c2 = new THREE.Mesh(new THREE.ConeGeometry(1.7, 2.8, 6), lM); c2.position.y = 3.6; c2.castShadow = true; prop.add(c1, c2); }
+        prop.position.copy(p); mapEnvironmentGroup.add(prop);
+    }
+    const portal = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.65, 16, 32), new THREE.MeshBasicMaterial({ color: mapCfg.portalColor })); portal.position.copy(activePathNodes[0]); portal.position.y = 3.6; portal.rotation.y = Math.PI / 2; mapEnvironmentGroup.add(portal);
+    const baseG = new THREE.Group(), b1 = new THREE.Mesh(new THREE.BoxGeometry(10, 8.5, 10), new THREE.MeshStandardMaterial({ color: mapCfg.baseColor })); b1.position.y = 4.25; b1.castShadow = true; const b2 = new THREE.Mesh(new THREE.BoxGeometry(4.2, 5.2, 10.4), new THREE.MeshStandardMaterial({ color: 0x0f172a })); b2.position.y = 2.6; baseG.add(b1, b2); baseG.position.copy(activePathNodes[activePathNodes.length - 1]); mapEnvironmentGroup.add(baseG);
+}
+
+buildMapEnvironmentById(getCurrentHourlyMapIndex());
+
+let lastKnownHourlyMapId = getCurrentHourlyMapIndex();
+function updateHourlyMapRotationSystem() {
+    const nowMs = Date.now(), currentHourlyId = Math.floor(nowMs / 3600000) % MAPS_DB.length, nextHourlyId = (currentHourlyId + 1) % MAPS_DB.length, msRemaining = 3600000 - (nowMs % 3600000), totalSec = Math.floor(msRemaining / 1000);
+    const mapCfg = MAPS_DB[currentHourlyId], nextMapCfg = MAPS_DB[nextHourlyId];
+
+    const timerEl = document.getElementById('hub-map-timer'); if (timerEl) timerEl.innerText = `${String(Math.floor(totalSec / 60)).padStart(2, '0')}:${String(totalSec % 60).padStart(2, '0')}`;
+    const nameEl = document.getElementById('hub-map-name'); if (nameEl) nameEl.innerText = mapCfg.name;
+    const nextEl = document.getElementById('hub-map-next-label'); if (nextEl) nextEl.innerText = `Siguiente: ${nextMapCfg.name}`;
+    const iconEl = document.getElementById('hub-map-icon'); if (iconEl) iconEl.className = `fa-solid ${mapCfg.icon}`;
+    const boxEl = document.getElementById('hub-map-icon-box'); if (boxEl) boxEl.className = `w-12 h-12 rounded-2xl border-2 flex items-center justify-center text-2xl shadow-md ${mapCfg.badgeColor}`;
+
+    if (currentHourlyId !== lastKnownHourlyMapId) {
+        lastKnownHourlyMapId = currentHourlyId;
+        if (gState.mode === 'game') {
+            if (!gState.notifiedMapRotationInMatch) {
+                gState.notifiedMapRotationInMatch = true;
+                showToast(`🗺️ ¡Rotación completada! El nuevo mapa (${mapCfg.name}) cargará en tu siguiente partida.`, true);
+                const lockInfo = document.getElementById('ig-map-lock-info'); if (lockInfo) lockInfo.innerText = `🗺️ Mapa Fijado: ${MAPS_DB[gState.lockedMapId].name} (Nuevo en Hub: ${mapCfg.name})`;
+            }
+        } else {
+            buildMapEnvironmentById(currentHourlyId); showToast(`🗺️ ¡Nuevo Mapa en Rotación: ${mapCfg.name}!`, true);
+        }
+    }
+}
+setInterval(updateHourlyMapRotationSystem, 1000);
+
+// ==========================================
+// 5. ECONOMÍA, INTERFAZ Y NAVEGACIÓN
+// ==========================================
+function addShopCoins(amount) { pData.shopCoins = Math.max(0, Math.floor(pData.shopCoins + amount)); saveAllProgress(); updateUIStats(); renderLeaderboards(); }
+function spendShopCoins(amount) { if (pData.shopCoins < amount) return false; pData.shopCoins = Math.floor(pData.shopCoins - amount); saveAllProgress(); updateUIStats(); renderLeaderboards(); return true; }
+function addMatchCash(amount) { gState.matchCash = Math.max(0, Math.floor(gState.matchCash + amount)); updateUIStats(); }
+function spendMatchCash(amount) { if (gState.matchCash < amount) return false; gState.matchCash = Math.floor(gState.matchCash - amount); updateUIStats(); return true; }
+
+function updateUIStats() {
+    const coinsFormatted = pData.shopCoins.toLocaleString();
+    document.getElementById('hub-coins').innerText = coinsFormatted; document.getElementById('armory-coins').innerText = coinsFormatted; document.getElementById('ig-shop-coins').innerText = `${coinsFormatted} 🪙`; document.getElementById('hub-best-wave').innerText = `Ola ${pData.highestWave}`;
+    
+    // Reflejar el nombre fijo
+    const nEl = document.getElementById('hub-player-name-display');
+    if (nEl) nEl.innerText = pData.playerName;
+
+    document.getElementById('ig-cash').innerText = `$${gState.matchCash.toLocaleString()}`; document.getElementById('hub-level').innerText = pData.level; document.getElementById('hub-xp').innerText = pData.xp;
+    const needed = pData.level * 100; document.getElementById('hub-max-xp').innerText = needed; document.getElementById('hub-xp-bar').style.width = `${Math.min(100, (pData.xp / needed) * 100)}%`; document.getElementById('trade-lvl-txt').innerText = pData.level;
+    const eqCount = pData.loadout.filter(x => x !== null).length; document.getElementById('play-loadout-count').innerText = eqCount; document.getElementById('armory-eq-count').innerText = eqCount;
+
+    if (gState.mode === 'game') {
+        pData.loadout.forEach(key => { if (!key) return; const el = document.getElementById('slot-' + key); if (el) el.classList.toggle('cant-afford', gState.matchCash < TOWER_DB[key].placeCost); });
+        if (gState.inspectedTower) refreshInspectorUI(gState.inspectedTower);
+    }
+}
+
+function addXp(amount) { pData.xp += amount; while (pData.xp >= pData.level * 100) { pData.xp -= pData.level * 100; pData.level++; showToast(`🎉 ¡Subiste al Nivel ${pData.level}!`, true); } saveAllProgress(); updateUIStats(); checkTradeTab(); }
+function cheatLevelUp() { pData.level += 5; saveAllProgress(); updateUIStats(); checkTradeTab(); renderLeaderboards(); showToast(`⚡ Nivel aumentado a ${pData.level}`, true); }
+
+function showToast(msg, isSuccess = false) {
+    const box = document.createElement('div'); box.className = 'toast'; box.style.borderColor = isSuccess ? 'var(--green)' : 'var(--blue)'; box.innerHTML = `<i class="fa-solid ${isSuccess ? 'fa-circle-check text-green-400' : 'fa-circle-info text-sky-400'}"></i> <span>${msg}</span>`;
+    document.getElementById('toast-container').appendChild(box); setTimeout(() => box.remove(), 3400);
+}
+
+function switchTab(tabId) {
+    document.querySelectorAll('.tab-section').forEach(el => el.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active'); document.getElementById('btn-' + tabId).classList.add('active');
+    if (tabId === 'tab-play') updateResumeMatchBanner(); if (tabId === 'tab-armory') renderArmory();
+    if (tabId === 'tab-leaderboard') { renderLeaderboards(); refreshCloudLeaderboards().then(() => renderLeaderboards()); }
+    if (tabId === 'tab-trade') checkTradeTab();
+}
+
+function updateResumeMatchBanner() {
+    const banner = document.getElementById('resume-match-banner'); if (!banner) return; const m = pData.activeMatch;
+    if (m && m.hp > 0 && (m.wave > 0 || (m.towers && m.towers.length > 0))) {
+        banner.classList.remove('hidden'); const diffNames = { easy: 'Modo Fácil', medium: 'Modo Medio', hard: 'Modo Difícil', endless: 'Modo Endless' }; const lockedMapName = MAPS_DB[m.lockedMapId ?? 0]?.name || 'Bosque Esmeralda';
+        document.getElementById('resume-match-title').innerText = `${diffNames[m.difficulty] || 'Partida'} • Oleada ${m.wave} / ${m.maxWave}`; document.getElementById('resume-match-details').innerText = `Mapa: ${lockedMapName} | Efectivo: $${m.matchCash} | Salud Base: ${m.hp}/100`;
+    } else { banner.classList.add('hidden'); }
+}
+function discardSavedMatch() { pData.activeMatch = null; saveAllProgress(); updateResumeMatchBanner(); showToast('🗑️ Partida guardada descartada.'); }
+function openBackupModal() { saveAllProgress(); document.getElementById('backup-export-input').value = btoa(unescape(encodeURIComponent(JSON.stringify(pData)))); document.getElementById('backup-modal').style.display = 'flex'; }
+function closeBackupModal() { document.getElementById('backup-modal').style.display = 'none'; }
+function copyBackupCode() { const input = document.getElementById('backup-export-input'); input.select(); document.execCommand('copy'); showToast('📋 ¡Código copiado!', true); }
+function importBackupCode() {
+    const rawCode = document.getElementById('backup-import-input').value.trim(); if (!rawCode) return;
+    try { const decoded = JSON.parse(decodeURIComponent(escape(atob(rawCode)))); applyLoadedData(decoded); saveAllProgress(); updateUIStats(); renderArmory(); renderLeaderboards(); checkTradeTab(); closeBackupModal(); showToast('✅ ¡Progreso restaurado!', true); } catch (e) { showToast('❌ Código no válido.'); }
+}
+
+function renderArmory() {
+    updateUIStats();
+    const lDiv = document.getElementById('armory-loadout'); lDiv.innerHTML = '';
+    for (let i = 0; i < 5; i++) {
+        const key = pData.loadout[i];
+        if (key && TOWER_DB[key]) {
+            const t = TOWER_DB[key];
+            lDiv.innerHTML += `
+                <div onclick="unequipTowerSlot(${i})" class="bg-[#1b2230] border-2 border-green-500 hover:border-red-500 rounded-2xl p-3 flex flex-col items-center justify-between min-h-[118px] cursor-pointer group transition shadow-lg">
+                    <div class="flex justify-between w-full text-[10px] font-extrabold"><span class="text-green-400">SLOT ${i + 1}</span><span class="text-emerald-400">💵 $${t.placeCost}</span></div>
+                    <i class="fa-solid ${t.icon} text-3xl text-white my-2 group-hover:scale-110 transition"></i>
+                    <div class="font-game text-sm text-white group-hover:hidden">${t.name}</div>
+                    <div class="font-game text-xs text-red-400 hidden group-hover:block"><i class="fa-solid fa-xmark"></i> QUITAR</div>
+                </div>`;
+        } else {
+            lDiv.innerHTML += `<div class="border-2 border-dashed border-gray-600 rounded-2xl p-3 flex flex-col items-center justify-center min-h-[118px] text-gray-500 bg-black/25"><i class="fa-solid fa-plus text-xl mb-1"></i><span class="text-xs font-bold uppercase">Hueco Libre</span></div>`;
+        }
+    }
+    const cDiv = document.getElementById('armory-catalog'); cDiv.innerHTML = '';
+    Object.entries(TOWER_DB).forEach(([key, t]) => {
+        const isUnlocked = pData.unlocked.includes(key), isEquipped = pData.loadout.includes(key);
+        let btnHTML = !isUnlocked ? `<button onclick="buyTowerFromShop('${key}')" class="btn ${pData.shopCoins >= t.shopCost ? 'btn-green' : 'btn-dark'} w-full py-2.5 text-xs"><i class="fa-solid fa-coins text-yellow-300"></i> COMPRAR (${t.shopCost} 🪙)</button>` : (isEquipped ? `<button onclick="unequipTowerByKey('${key}')" class="btn btn-yellow w-full py-2.5 text-xs"><i class="fa-solid fa-check"></i> EQUIPADA (QUITAR)</button>` : `<button onclick="equipTowerByKey('${key}')" class="btn btn-blue w-full py-2.5 text-xs"><i class="fa-solid fa-plus"></i> EQUIPAR EN LOADOUT</button>`);
+        cDiv.innerHTML += `
+            <div class="tower-card ${isEquipped ? 'equipped' : (isUnlocked ? 'unlocked' : '')}">
+                <div><div class="flex justify-between items-center mb-2"><span class="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${t.cliff ? 'bg-purple-500/25 text-purple-300 border border-purple-500/40' : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'} uppercase">${t.cliff ? '⛰️ Montaña' : '🌱 Suelo'}</span><span class="text-xs font-extrabold text-emerald-400">💵 $${t.placeCost}</span></div>
+                <div class="my-3 flex flex-col items-center"><div class="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl text-white shadow-md mb-2 border border-white/15" style="background-color: #${t.color.toString(16).padStart(6, '0')}33;"><i class="fa-solid ${t.icon}"></i></div><h4 class="font-game text-lg text-white leading-tight">${t.name}</h4><p class="text-[11px] text-gray-400 font-bold mt-0.5 text-center">${t.role}</p></div>
+                <div class="bg-[#0b0e15] rounded-xl p-2.5 grid grid-cols-3 gap-1 text-center text-[11px] border border-gray-800 mb-3"><div><div class="text-gray-500 font-bold">DAÑO</div><div class="font-extrabold text-red-400">${t.isFarm ? '+💵$' : t.damage}</div></div><div><div class="text-gray-500 font-bold">CADENCIA</div><div class="font-extrabold text-sky-400">${t.rate ? t.rate + 's' : 'Ronda'}</div></div><div><div class="text-gray-500 font-bold">RANGO</div><div class="font-extrabold text-purple-400">${t.range}m</div></div></div></div>
+                <div class="mt-auto">${btnHTML}</div></div>`;
+    });
+}
+
+function buyTowerFromShop(key) {
+    const t = TOWER_DB[key]; if (pData.unlocked.includes(key)) return;
+    if (spendShopCoins(t.shopCost)) { pData.unlocked.push(key); sfx.play('buy'); const emptyIdx = pData.loadout.indexOf(null); if (emptyIdx !== -1) { pData.loadout[emptyIdx] = key; showToast(`✅ ¡${t.name} equipado!`, true); } else { showToast(`✅ ¡${t.name} desbloqueado!`, true); } saveAllProgress(); renderArmory(); } else { showToast(`❌ Necesitas ${t.shopCost} 🪙 Monedas.`); }
+}
+function equipTowerByKey(key) { if (pData.loadout.includes(key)) return; const emptyIdx = pData.loadout.indexOf(null); if (emptyIdx !== -1) pData.loadout[emptyIdx] = key; else pData.loadout[4] = key; sfx.play('place'); saveAllProgress(); renderArmory(); showToast(`🛡️ ${TOWER_DB[key].name} equipado.`, true); }
+function unequipTowerSlot(slotIndex) { const activeCount = pData.loadout.filter(x => x !== null).length; if (activeCount <= 1) return showToast('⚠️ Debes llevar al menos 1 tropa.'); pData.loadout[slotIndex] = null; saveAllProgress(); renderArmory(); }
+function unequipTowerByKey(key) { const idx = pData.loadout.indexOf(key); if (idx !== -1) unequipTowerSlot(idx); }
+function checkTradeTab() { const locked = pData.level < 20; document.getElementById('trade-locked').classList.toggle('hidden', !locked); }
+
+// ==========================================
+// 6. FLUJO DEL JUEGO
+// ==========================================
+function clear3DMatchObjects() { gState.towers.forEach(t => scene.remove(t.mesh)); gState.enemies.forEach(e => { scene.remove(e.mesh); e.hudTag.remove(); }); gState.projectiles.forEach(p => scene.remove(p.mesh)); document.getElementById('vfx-layer').innerHTML = ''; gState.towers = []; gState.enemies = []; gState.projectiles = []; gState.enemiesQueue = []; }
+
+function configureModeBadge(diff) {
+    if (diff === 'easy') { gState.maxWave = 15; document.getElementById('ig-mode-badge').innerText = 'NIVEL FÁCIL (HP x1.0)'; }
+    else if (diff === 'medium') { gState.maxWave = 20; document.getElementById('ig-mode-badge').innerText = 'NIVEL MEDIO (HP x1.65)'; }
+    else if (diff === 'hard') { gState.maxWave = 25; document.getElementById('ig-mode-badge').innerText = 'NIVEL DIFÍCIL (HP x2.5)'; }
+    else { gState.maxWave = '∞'; document.getElementById('ig-mode-badge').innerText = 'MODO ENDLESS'; }
+    const lockedMap = MAPS_DB[gState.lockedMapId] || MAPS_DB[0]; document.getElementById('ig-map-lock-info').innerText = `🗺️ Mapa: ${lockedMap.name}`;
+}
+
+// Actualizada para recibir mapId forzado si se inicia desde la sala Co-op
+function startGame(diff, forcedMapId = null) {
+    const equipped = pData.loadout.filter(x => x !== null); if (equipped.length === 0) pData.loadout[0] = 'scout';
+    
+    gState.lockedMapId = forcedMapId !== null ? forcedMapId : getCurrentHourlyMapIndex();
+    gState.notifiedMapRotationInMatch = false;
+    if (gState.renderedMapId !== gState.lockedMapId) buildMapEnvironmentById(gState.lockedMapId);
+
+    document.getElementById('hub-ui').style.display = 'none'; document.getElementById('game-ui').style.display = 'flex';
+    clear3DMatchObjects(); gState.mode = 'game'; gState.difficulty = diff; gState.hp = 100; gState.wave = 0; gState.active = false; gState.speed = 1; gState.auto = false; document.getElementById('btn-next-wave').disabled = false;
+    if (diff === 'easy') gState.matchCash = 650; else if (diff === 'medium') gState.matchCash = 600; else if (diff === 'hard') gState.matchCash = 550; else gState.matchCash = 800;
+
+    configureModeBadge(diff); closeInspector(); cancelPlacement(); resetCameraCenter(); renderIGHotbar(); updateIGStats(); updateToggleBtns(); saveAllProgress();
+}
+
+function resumeSavedMatch() {
+    const saved = pData.activeMatch; if (!saved) return;
+    gState.lockedMapId = typeof saved.lockedMapId === 'number' ? saved.lockedMapId : getCurrentHourlyMapIndex(); gState.notifiedMapRotationInMatch = false; buildMapEnvironmentById(gState.lockedMapId);
+    document.getElementById('hub-ui').style.display = 'none'; document.getElementById('game-ui').style.display = 'flex';
+    clear3DMatchObjects(); gState.mode = 'game'; gState.difficulty = saved.difficulty || 'easy'; gState.wave = saved.wave || 0; gState.matchCash = saved.matchCash || 650; gState.hp = saved.hp || 100; gState.speed = saved.speed || 1; gState.auto = saved.auto || false; gState.active = false; document.getElementById('btn-next-wave').disabled = false;
+    configureModeBadge(gState.difficulty);
+    if (Array.isArray(saved.towers)) saved.towers.forEach(td => { if (TOWER_DB[td.type]) restoreSavedTower(td); });
+    closeInspector(); cancelPlacement(); resetCameraCenter(); renderIGHotbar(); updateIGStats(); updateToggleBtns(); showToast(`✅ Partida restaurada en ${MAPS_DB[gState.lockedMapId].name}`, true);
+}
+
+function restoreSavedTower(td) {
+    const cfg = TOWER_DB[td.type]; const mesh = buildRobloxTowerMesh(cfg); mesh.position.set(td.x, td.y, td.z); scene.add(mesh);
+    const restoredTower = { id: Date.now() + Math.random(), type: td.type, level: 1, targetMode: td.targetMode || 'Primero', mesh: mesh, stats: { ...cfg }, invested: td.invested || cfg.placeCost, lastS: 0, kills: td.kills || 0 }; mesh.userData.towerRef = restoredTower;
+    const targetLvl = Math.min(5, Math.max(1, td.level || 1));
+    while (restoredTower.level < targetLvl) { restoredTower.level++; if (!restoredTower.stats.isFarm) restoredTower.stats.damage = Math.max(restoredTower.stats.damage + 5, Math.floor(restoredTower.stats.damage * 1.45)); if (restoredTower.stats.rate > 0) restoredTower.stats.rate = Math.max(0.06, parseFloat((restoredTower.stats.rate * 0.86).toFixed(2))); restoredTower.stats.range = Math.floor(restoredTower.stats.range * 1.12) + 1; applyVisualUpgradeToMesh(restoredTower); }
+    gState.towers.push(restoredTower);
+}
+
+function updateIGStats() {
+    updateUIStats(); document.getElementById('ig-hp').innerText = `${Math.max(0, Math.floor(gState.hp))} / 100`; document.getElementById('ig-wave').innerText = `Oleada ${gState.wave} / ${gState.maxWave}`;
+}
+function renderIGHotbar() {
+    const hb = document.getElementById('ig-hotbar'); hb.innerHTML = '';
+    pData.loadout.forEach((key, i) => {
+        if (!key || !TOWER_DB[key]) return; const t = TOWER_DB[key];
+        hb.innerHTML += `<div class="hotbar-slot" id="slot-${key}" onclick="prepPlacement('${key}')"><div class="flex justify-between w-full items-center px-1"><span class="bg-gray-800 text-sky-400 text-[10px] px-1.5 py-0.5 rounded font-extrabold">${i + 1}</span><span class="text-[9px] text-gray-400 font-bold">${t.cliff ? '⛰️' : '🌱'}</span></div><i class="fa-solid ${t.icon} text-white text-2xl my-1"></i><div class="text-[10px] font-game truncate w-full text-center">${t.name}</div><div class="text-[11px] text-emerald-400 font-extrabold bg-black/75 w-full text-center py-0.5 rounded-lg border border-emerald-500/40">$${t.placeCost}</div></div>`;
+    }); updateUIStats();
+}
+
+function toggleSpeed() { gState.speed = gState.speed === 1 ? 2 : (gState.speed === 2 ? 3 : 1); updateToggleBtns(); saveAllProgress(); }
+function toggleAuto() { gState.auto = !gState.auto; updateToggleBtns(); saveAllProgress(); if (gState.auto && !gState.active && gState.mode === 'game') startNextWave(); }
+function updateToggleBtns() {
+    const bS = document.getElementById('btn-speed'), tS = document.getElementById('txt-speed'); tS.innerText = 'x' + gState.speed; bS.className = `btn ${gState.speed > 1 ? 'btn-blue' : 'btn-dark'} px-3.5 py-2 text-xs w-32 flex justify-between`;
+    const bA = document.getElementById('btn-auto'), tA = document.getElementById('txt-auto'); tA.innerText = gState.auto ? 'ON' : 'OFF'; tA.className = gState.auto ? 'text-white font-bold' : 'text-red-400 font-bold'; bA.className = `btn ${gState.auto ? 'btn-green' : 'btn-dark'} px-3.5 py-2 text-xs w-32 flex justify-between`;
+}
+
+// ==========================================
+// 7. COLOCACIÓN E INSPECTOR
+// ==========================================
+let pointerDownPos = { x: 0, y: 0 };
+window.addEventListener('pointerdown', e => { if (gState.mode !== 'game' || e.target.tagName !== 'CANVAS') return; pointerDownPos = { x: e.clientX, y: e.clientY }; });
+window.addEventListener('pointermove', e => {
+    if (gState.mode !== 'game' || !gState.selectedId) return;
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1; mouse.y = -(e.clientY / window.innerHeight) * 2 + 1; raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects([groundPlane, ...cliffColliders], true);
+    if (hits.length > 0) {
+        const hit = hits[0].object, pt = hits[0].point, isCliff = hit.userData.isCliff || false, py = isCliff ? hit.userData.topY : 0.1;
+        placementIndicator.position.set(pt.x, py + 1.1, pt.z); rangeRing.position.set(pt.x, py + 0.12, pt.z);
+        let valid = (TOWER_DB[gState.selectedId].cliff === isCliff);
+        if (!isCliff) for (let j = 0; j < activePathNodes.length - 1; j++) if (distToSegment(pt, activePathNodes[j], activePathNodes[j + 1]) < 5.0) { valid = false; break; }
+        for (const t of gState.towers) if (Math.hypot(t.mesh.position.x - pt.x, t.mesh.position.z - pt.z) < 2.3) { valid = false; break; }
+        placementIndicator.material.color.setHex(valid ? 0x00ff66 : 0xff2222); placementIndicator.userData.valid = valid; placementIndicator.userData.groundY = py;
+    }
+});
+window.addEventListener('pointerup', e => {
+    if (gState.mode !== 'game' || e.target.tagName !== 'CANVAS') return;
+    if (Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y) >= 6) return;
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1; mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    if (gState.selectedId) {
+        if (e.button !== 0) { cancelPlacement(); return; }
+        if (placementIndicator.userData.valid) { placeTower(gState.selectedId, placementIndicator.position.clone(), placementIndicator.userData.groundY || 0); cancelPlacement(); } else { showToast(TOWER_DB[gState.selectedId].cliff ? '⛰️ Debe colocarse sobre una Montaña.' : '⚠️ Coloca la unidad en suelo.'); }
+    } else {
+        raycaster.setFromCamera(mouse, camera); const hits = raycaster.intersectObjects(gState.towers.map(t => t.mesh), true);
+        if (hits.length > 0) { let obj = hits[0].object; while (obj.parent && !obj.userData.towerRef) obj = obj.parent; if (obj && obj.userData.towerRef) return openInspector(obj.userData.towerRef); }
+        closeInspector();
+    }
+});
+
+window.addEventListener('keydown', e => {
+    if (gState.mode !== 'game') return; const k = e.key.toLowerCase();
+    if (k === 'w' || e.key === 'ArrowUp') gState.keys.w = true; if (k === 's' || e.key === 'ArrowDown') gState.keys.s = true; if (k === 'a' || e.key === 'ArrowLeft') gState.keys.a = true; if (k === 'd' || e.key === 'ArrowRight') gState.keys.d = true;
+    if (e.key === 'Escape') { cancelPlacement(); closeInspector(); }
+    if (k === 'e' && gState.inspectedTower) upgradeSelectedTower(); if ((k === 'x' || e.key === 'Backspace') && gState.inspectedTower) sellSelectedTower();
+    if (e.key >= '1' && e.key <= '5') { const key = pData.loadout[parseInt(e.key) - 1]; if (key) prepPlacement(key); }
+});
+window.addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (k === 'w' || e.key === 'ArrowUp') gState.keys.w = false; if (k === 's' || e.key === 'ArrowDown') gState.keys.s = false; if (k === 'a' || e.key === 'ArrowLeft') gState.keys.a = false; if (k === 'd' || e.key === 'ArrowRight') gState.keys.d = false; });
+
+function prepPlacement(id) {
+    const cfg = TOWER_DB[id]; if (gState.matchCash < cfg.placeCost) return showToast(`❌ Necesitas $${cfg.placeCost} de Efectivo.`);
+    gState.selectedId = id; document.querySelectorAll('.hotbar-slot').forEach(e => e.classList.remove('selected')); const slotEl = document.getElementById('slot-' + id); if (slotEl) slotEl.classList.add('selected');
+    document.getElementById('placement-hint-text').innerText = cfg.cliff ? `⛰️ Haz clic en una MONTAÑA para desplegar ($${cfg.placeCost})` : `🌱 Haz clic en el SUELO para desplegar ($${cfg.placeCost})`;
+    document.getElementById('placement-hint').classList.remove('hidden'); document.getElementById('placement-hint').classList.add('flex');
+    placementIndicator.visible = true; rangeRing.visible = true; rangeRing.scale.set(cfg.range, cfg.range, 1); closeInspector();
+}
+function cancelPlacement() { gState.selectedId = null; document.querySelectorAll('.hotbar-slot').forEach(e => e.classList.remove('selected')); document.getElementById('placement-hint').classList.add('hidden'); document.getElementById('placement-hint').classList.remove('flex'); placementIndicator.visible = false; if (!gState.inspectedTower) rangeRing.visible = false; }
+
+function buildRobloxTowerMesh(cfg) {
+    const grp = new THREE.Group(); const bodyMat = new THREE.MeshStandardMaterial({ color: cfg.color, roughness: 0.6 }), skinMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 }), hatMat = new THREE.MeshStandardMaterial({ color: cfg.hatColor, roughness: 0.4 }), gunMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.6, roughness: 0.3 });
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.25, 0.25, 20), new THREE.MeshStandardMaterial({ color: 0x334155 })); pad.position.y = 0.12; grp.add(pad);
+    if (cfg.isFarm) { const baseBox = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.2, 1.9), new THREE.MeshStandardMaterial({ color: 0x15803d })); baseBox.position.y = 0.7; baseBox.castShadow = true; const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.75), new THREE.MeshStandardMaterial({ color: 0x10f587, emissive: 0x059669, emissiveIntensity: 0.6 })); crystal.position.y = 2.1; grp.add(baseBox, crystal); grp.userData.muz = new THREE.Vector3(0, 2.1, 0); grp.userData.crystal = crystal; return grp; }
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.35, 0.65), bodyMat); torso.position.y = 1.5; torso.castShadow = true; const head = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.82, 0.82), skinMat); head.position.y = 2.6; head.castShadow = true; const hat = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.28, 0.9), hatMat); hat.position.y = 3.1; hat.castShadow = true;
+    const lA = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.15, 0.38), bodyMat); lA.position.set(-0.78, 1.75, 0.25); lA.rotation.x = -Math.PI / 2.3; const rA = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.15, 0.38), bodyMat); rA.position.set(0.78, 1.75, 0.25); rA.rotation.x = -Math.PI / 2.3;
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 1.55), gunMat); gun.position.set(0.78, 1.85, 0.95); gun.castShadow = true;
+    const lL = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.9, 0.48), new THREE.MeshStandardMaterial({ color: 0x1e293b })); lL.position.set(-0.32, 0.6, 0); const rL = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.9, 0.48), new THREE.MeshStandardMaterial({ color: 0x1e293b })); rL.position.set(0.32, 0.6, 0);
+    grp.add(torso, head, hat, lA, rA, gun, lL, rL); grp.userData.muz = new THREE.Vector3(0.78, 1.85, 1.7); grp.userData.gunMesh = gun; return grp;
+}
+
+function applyVisualUpgradeToMesh(tower) {
+    const grp = tower.mesh, lvl = tower.level; grp.scale.setScalar(1 + (lvl - 1) * 0.06);
+    if (lvl === 2) { const visor = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.22, 0.2), new THREE.MeshBasicMaterial({ color: 0x00ffff })); visor.position.set(0, 2.62, 0.42); grp.add(visor); }
+    else if (lvl === 3) { const goldMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.7, roughness: 0.2 }); const pL = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.35, 0.75), goldMat); pL.position.set(-0.82, 2.15, 0); const pR = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.35, 0.75), goldMat); pR.position.set(0.82, 2.15, 0); grp.add(pL, pR); }
+    else if (lvl === 4) { if (grp.userData.gunMesh) { grp.userData.gunMesh.material = new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xb45309, emissiveIntensity: 0.4 }); grp.userData.gunMesh.scale.set(1.3, 1.3, 1.25); } }
+    else if (lvl === 5) { const aura = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.1, 12, 32), new THREE.MeshBasicMaterial({ color: 0x00ff88 })); aura.rotateX(Math.PI / 2); aura.position.y = 0.25; grp.add(aura); }
+}
+
+function placeTower(id, pos, groundY) {
+    const cfg = TOWER_DB[id]; if (!spendMatchCash(cfg.placeCost)) return;
+    const mesh = buildRobloxTowerMesh(cfg); mesh.position.set(pos.x, groundY, pos.z); scene.add(mesh); sfx.play('place');
+    const newTower = { id: Date.now() + Math.random(), type: id, level: 1, targetMode: 'Primero', mesh: mesh, stats: { ...cfg }, invested: cfg.placeCost, lastS: 0, kills: 0 };
+    mesh.userData.towerRef = newTower; gState.towers.push(newTower); updateIGStats(); openInspector(newTower); saveAllProgress();
+}
+
+function getUpgradeCost(tower) { return Math.floor(tower.stats.placeCost * 0.8 * tower.level); }
+function openInspector(t) { gState.inspectedTower = t; document.getElementById('inspector-ui').classList.remove('hidden'); document.getElementById('inspector-ui').classList.add('flex'); refreshInspectorUI(t); }
+
+function refreshInspectorUI(t) {
+    if (!t) return; const baseCfg = TOWER_DB[t.type];
+    rangeRing.scale.set(t.stats.range, t.stats.range, 1); rangeRing.position.set(t.mesh.position.x, t.mesh.position.y + 0.15, t.mesh.position.z); rangeRing.visible = true;
+    document.getElementById('insp-icon').className = `fa-solid ${baseCfg.icon}`; document.getElementById('insp-name').innerText = baseCfg.name; document.getElementById('insp-lvl').innerText = t.level >= 5 ? '🌟 NIVEL 5 (MÁXIMO)' : `NIVEL ${t.level} / 5`; document.getElementById('insp-target-btn').innerText = t.targetMode;
+
+    const btnUpg = document.getElementById('btn-upg');
+    if (t.level < 5) {
+        const nextDmg = t.stats.isFarm ? 0 : Math.max(t.stats.damage + 5, Math.floor(t.stats.damage * 1.45)), nextRate = t.stats.rate > 0 ? Math.max(0.06, parseFloat((t.stats.rate * 0.86).toFixed(2))) : 0, nextRng = Math.floor(t.stats.range * 1.12) + 1;
+        document.getElementById('insp-dmg').innerHTML = t.stats.isFarm ? `+$${80 * t.level}` : `${t.stats.damage}`; document.getElementById('insp-rate').innerHTML = t.stats.rate > 0 ? `${t.stats.rate}s` : `Ronda`; document.getElementById('insp-rng').innerHTML = `${Math.round(t.stats.range)}m`;
+        const cost = getUpgradeCost(t); document.getElementById('insp-cost').innerText = `💵 $${cost}`; btnUpg.disabled = gState.matchCash < cost;
+    } else {
+        document.getElementById('insp-dmg').innerHTML = t.stats.isFarm ? `+$${80 * t.level} (MAX)` : `${t.stats.damage} (MAX)`; document.getElementById('insp-rate').innerHTML = t.stats.rate > 0 ? `${t.stats.rate}s (MAX)` : 'Ronda'; document.getElementById('insp-rng').innerHTML = `${Math.round(t.stats.range)}m (MAX)`; document.getElementById('insp-cost').innerText = 'MÁXIMO'; btnUpg.disabled = true;
+    }
+    document.getElementById('insp-sell').innerText = `+$${Math.floor(t.invested * 0.7)}`;
+}
+
+function closeInspector() { gState.inspectedTower = null; document.getElementById('inspector-ui').classList.add('hidden'); document.getElementById('inspector-ui').classList.remove('flex'); if (!gState.selectedId) rangeRing.visible = false; }
+function cycleTargetMode() { const t = gState.inspectedTower; if (!t) return; const modes = ['Primero', 'Más Fuerte', 'Último', 'Cercano']; t.targetMode = modes[(modes.indexOf(t.targetMode) + 1) % modes.length]; refreshInspectorUI(t); saveAllProgress(); }
+
+function upgradeSelectedTower() {
+    const t = gState.inspectedTower; if (!t || t.level >= 5) return; const cost = getUpgradeCost(t); if (!spendMatchCash(cost)) return showToast(`❌ Necesitas $${cost} de Efectivo.`);
+    t.invested += cost; t.level++; if (!t.stats.isFarm) t.stats.damage = Math.max(t.stats.damage + 5, Math.floor(t.stats.damage * 1.45)); if (t.stats.rate > 0) t.stats.rate = Math.max(0.06, parseFloat((t.stats.rate * 0.86).toFixed(2))); t.stats.range = Math.floor(t.stats.range * 1.12) + 1;
+    applyVisualUpgradeToMesh(t); sfx.play('upgrade'); floatingText(t.mesh.position, `⬆️ NIVEL ${t.level}!`, 'text-sky-300'); refreshInspectorUI(t); updateIGStats(); saveAllProgress();
+}
+function sellSelectedTower() {
+    const t = gState.inspectedTower; if (!t) return; const refund = Math.floor(t.invested * 0.7); addMatchCash(refund); sfx.play('sell'); floatingText(t.mesh.position, `+$${refund}`, 'text-emerald-400'); scene.remove(t.mesh); gState.towers = gState.towers.filter(x => x !== t); closeInspector(); updateIGStats(); saveAllProgress();
+}
+
+// ==========================================
+// 8. OLEADAS Y ENEMIGOS
+// ==========================================
+function startNextWave() {
+    if (gState.active) return; gState.wave++; if (gState.wave > pData.highestWave) pData.highestWave = gState.wave;
+    gState.active = true; document.getElementById('btn-next-wave').disabled = true;
+    const count = 6 + Math.floor(gState.wave * 2.5); gState.enemiesQueue = [];
+    for (let i = 0; i < count; i++) { let type = 'normal'; if (gState.wave >= 2 && i % 3 === 0) type = 'speedy'; if (gState.wave >= 4 && i % 4 === 0) type = 'slow'; if (gState.wave >= 6 && i % 5 === 0) type = 'hidden'; gState.enemiesQueue.push(type); }
+    if (gState.wave % 5 === 0) { const bossCount = Math.max(1, Math.floor(gState.wave / 10)); for (let b = 0; b < bossCount; b++) gState.enemiesQueue.push('boss'); }
+    updateIGStats(); saveAllProgress();
+}
+
+function createRobloxEnemyMesh(db) {
+    const grp = new THREE.Group(); const bodyMat = new THREE.MeshStandardMaterial({ color: db.color, roughness: 0.6 }), skinMat = new THREE.MeshStandardMaterial({ color: db.skin, roughness: 0.5 });
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.35, 0.6), bodyMat); torso.position.y = 1.45; torso.castShadow = true; const head = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), skinMat); head.position.y = 2.55; head.castShadow = true;
+    const lArm = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.0, 0.38), skinMat); lArm.position.set(-0.75, 1.65, 0.3); lArm.rotation.x = -Math.PI / 2.2; const rArm = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.0, 0.38), skinMat); rArm.position.set(0.75, 1.65, 0.3); rArm.rotation.x = -Math.PI / 2.2;
+    const lLeg = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.0, 0.38), bodyMat); lLeg.position.set(-0.3, 0.55, 0); const rLeg = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.0, 0.38), bodyMat); rLeg.position.set(0.3, 0.55, 0);
+    grp.add(torso, head, lArm, rArm, lLeg, rLeg); grp.userData.legs = [lLeg, rLeg]; return grp;
+}
+
+function spawnEnemy(type) {
+    const db = ENEMY_DB[type], grp = createRobloxEnemyMesh(db); grp.scale.setScalar(db.scale); grp.position.copy(activePathNodes[0]); scene.add(grp);
+    const diffMult = gState.difficulty === 'medium' ? 1.65 : (gState.difficulty === 'hard' ? 2.50 : (gState.difficulty === 'endless' ? 1.75 : 1.0));
+    const waveScaling = gState.difficulty === 'endless' ? Math.pow(1.24, gState.wave - 1) : (1 + (gState.wave - 1) * 0.38 + Math.pow(gState.wave - 1, 1.35) * 0.08);
+    const maxHp = Math.max(10, Math.round(db.hp * diffMult * waveScaling));
+    
+    const hudTag = document.createElement('div'); hudTag.className = 'enemy-hud-tag'; hudTag.innerHTML = `<div class="enemy-name-label">${db.name.toUpperCase()}</div><div class="enemy-hp-box"><div class="enemy-hp-fill" style="width: 100%;"></div><div class="enemy-hp-num">${maxHp} / ${maxHp} HP</div></div>`;
+    document.getElementById('vfx-layer').appendChild(hudTag);
+    gState.enemies.push({ type: type, mesh: grp, hudTag: hudTag, fillEl: hudTag.querySelector('.enemy-hp-fill'), numEl: hudTag.querySelector('.enemy-hp-num'), hp: maxHp, max: maxHp, speed: db.speed, slowTimer: 0, cashRew: Math.round(db.cashReward * (1 + (gState.wave - 1) * 0.08)), pIdx: 0, progress: 0, headHeight: 3.3 * db.scale });
+    updateIGStats();
+}
+
+function updateEnemyHealthUI(en) {
+    const cur = Math.max(0, Math.ceil(en.hp)), pct = Math.max(0, Math.min(100, (cur / en.max) * 100)); en.fillEl.style.width = `${pct}%`;
+    en.fillEl.style.backgroundColor = pct > 55 ? '#00e676' : (pct > 25 ? '#facc15' : '#ef4444'); en.numEl.innerText = `${cur} / ${en.max} HP`;
+}
+
+function floatingText(pos, txt, cls = 'text-red-400') {
+    const el = document.createElement('div'); el.className = `dmg-text ${cls}`; el.innerText = txt; document.getElementById('vfx-layer').appendChild(el);
+    const p = pos.clone(); p.y += 3.2; p.project(camera); el.style.left = `${(p.x * 0.5 + 0.5) * window.innerWidth}px`; el.style.top = `${(p.y * -0.5 + 0.5) * window.innerHeight}px`; setTimeout(() => el.remove(), 800);
+}
+
+function drawTracer(p1, p2, color) { const line = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints([p1, p2]), new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: 0.9 })); scene.add(line); gState.projectiles.push({ mesh: line, life: 0.09 }); }
+
+function selectTargetForTower(tower) {
+    const inRange = gState.enemies.filter(e => tower.mesh.position.distanceTo(e.mesh.position) <= tower.stats.range); if (inRange.length === 0) return null;
+    if (tower.targetMode === 'Más Fuerte') return inRange.reduce((a, b) => (b.hp > a.hp ? b : a));
+    else if (tower.targetMode === 'Último') return inRange.reduce((a, b) => (b.progress < a.progress ? b : a));
+    else if (tower.targetMode === 'Cercano') return inRange.reduce((a, b) => (tower.mesh.position.distanceTo(b.mesh.position) < tower.mesh.position.distanceTo(a.mesh.position) ? b : a));
+    return inRange.reduce((a, b) => (b.progress > a.progress ? b : a));
+}
+
+function endGame(victory) {
+    gState.active = false; gState.mode = 'ended'; if (gState.wave > pData.highestWave) pData.highestWave = gState.wave; pData.activeMatch = null;
+    document.getElementById('end-screen').style.display = 'flex'; const pnl = document.getElementById('end-panel'); let coinsReward = 0;
+    if (victory) {
+        pData.victories = (pData.victories || 0) + 1; coinsReward = gState.difficulty === 'easy' ? 100 : (gState.difficulty === 'medium' ? 300 : (gState.difficulty === 'hard' ? 500 : gState.wave * 25));
+        document.getElementById('end-icon').className = 'fa-solid fa-trophy text-7xl mb-4 text-yellow-400'; document.getElementById('end-title').innerText = '¡VICTORIA!'; document.getElementById('end-desc').innerText = `¡Modo ${gState.difficulty.toUpperCase()} superado!`; pnl.style.borderColor = 'var(--yellow)';
+    } else {
+        coinsReward = gState.difficulty === 'endless' ? 0 : Math.floor((gState.wave / gState.maxWave) * ((gState.difficulty === 'easy' ? 100 : (gState.difficulty === 'medium' ? 300 : 500)) * 0.35));
+        document.getElementById('end-icon').className = 'fa-solid fa-skull text-7xl mb-4 text-red-500'; document.getElementById('end-title').innerText = 'BASE DESTRUIDA'; document.getElementById('end-desc').innerText = 'Las hordas superaron tus defensas.'; pnl.style.borderColor = 'var(--red)';
+    }
+    const xpGained = Math.floor(gState.wave * (victory ? 25 : 10));
+    document.getElementById('end-waves').innerText = `${gState.wave} / ${gState.maxWave}`; document.getElementById('end-best-wave').innerText = `Ola ${pData.highestWave} 🌊`; document.getElementById('end-coins').innerText = `+${coinsReward} 🪙`; document.getElementById('end-xp').innerText = `+${xpGained} XP`;
+    if (coinsReward > 0) addShopCoins(coinsReward); addXp(xpGained); saveAllProgress(); renderLeaderboards();
+}
+
+function saveAndExitToHub() {
+    saveAllProgress(); gState.active = false; gState.mode = 'hub'; const hourlyMapId = getCurrentHourlyMapIndex(); if (gState.renderedMapId !== hourlyMapId) buildMapEnvironmentById(hourlyMapId);
+    document.getElementById('end-screen').style.display = 'none'; document.getElementById('game-ui').style.display = 'none'; document.getElementById('hub-ui').style.display = 'flex';
+    closeInspector(); cancelPlacement(); updateUIStats(); renderArmory(); renderLeaderboards(); updateResumeMatchBanner(); showToast('💾 Partida guardada', true);
+}
+
+function returnToHubAfterEnd(targetTab = 'tab-armory') {
+    pData.activeMatch = null; saveAllProgress(); gState.active = false; gState.mode = 'hub'; const hourlyMapId = getCurrentHourlyMapIndex(); if (gState.renderedMapId !== hourlyMapId) buildMapEnvironmentById(hourlyMapId);
+    document.getElementById('end-screen').style.display = 'none'; document.getElementById('game-ui').style.display = 'none'; document.getElementById('hub-ui').style.display = 'flex';
+    closeInspector(); cancelPlacement(); updateUIStats(); switchTab(targetTab); updateResumeMatchBanner();
+}
+
+// ==========================================
+// 9. BUCLE PRINCIPAL
+// ==========================================
+function animate() {
+    requestAnimationFrame(animate); const rawDelta = Math.min(0.1, clock.getDelta()), time = clock.getElapsedTime();
+    if (gState.mode === 'game') {
+        const panSpeed = 34 * rawDelta;
+        if (gState.keys.w) { camera.position.z -= panSpeed; controls.target.z -= panSpeed; } if (gState.keys.s) { camera.position.z += panSpeed; controls.target.z += panSpeed; } if (gState.keys.a) { camera.position.x -= panSpeed; controls.target.x -= panSpeed; } if (gState.keys.d) { camera.position.x += panSpeed; controls.target.x += panSpeed; }
+        clampCameraPanBounds(); controls.update();
+        const delta = rawDelta * gState.speed, cTime = time * gState.speed;
+
+        if (gState.active && gState.enemiesQueue.length > 0) { gState.spawnTimer -= delta; if (gState.spawnTimer <= 0) { spawnEnemy(gState.enemiesQueue.shift()); gState.spawnTimer = 0.72; } }
+
+        for (let i = gState.enemies.length - 1; i >= 0; i--) {
+            const e = gState.enemies[i]; if (e.slowTimer > 0) e.slowTimer -= delta; const curSpeed = e.slowTimer > 0 ? e.speed * 0.55 : e.speed;
+            const tgt = activePathNodes[e.pIdx + 1];
+            if (tgt) {
+                const dir = new THREE.Vector3().subVectors(tgt, e.mesh.position); dir.y = 0; const step = curSpeed * delta;
+                if (dir.length() <= step) { e.mesh.position.set(tgt.x, 0, tgt.z); e.pIdx++; } else { dir.normalize(); e.mesh.position.addScaledVector(dir, step); e.mesh.lookAt(tgt.x, e.mesh.position.y, tgt.z); } e.progress += step;
+                const walkAngle = Math.sin(cTime * curSpeed * 1.8) * 0.55; if (e.mesh.userData.legs) { e.mesh.userData.legs[0].rotation.x = walkAngle; e.mesh.userData.legs[1].rotation.x = -walkAngle; }
+                const p2 = e.mesh.position.clone(); p2.y += e.headHeight; p2.project(camera); e.hudTag.style.left = `${(p2.x * 0.5 + 0.5) * window.innerWidth}px`; e.hudTag.style.top = `${(p2.y * -0.5 + 0.5) * window.innerHeight}px`;
+            } else {
+                gState.hp -= e.type === 'boss' ? 35 : 10; e.hudTag.remove(); scene.remove(e.mesh); gState.enemies.splice(i, 1); updateIGStats(); if (gState.hp <= 0) { endGame(false); break; }
+            }
+        }
+
+        gState.towers.forEach(t => {
+            if (t.mesh.userData.crystal) t.mesh.userData.crystal.rotation.y += delta * 2;
+            if (t.stats.damage > 0 && cTime - t.lastS >= t.stats.rate) {
+                const tgt = selectTargetForTower(t);
+                if (tgt) {
+                    t.mesh.lookAt(tgt.mesh.position.x, t.mesh.position.y, tgt.mesh.position.z); t.lastS = cTime;
+                    drawTracer(t.mesh.userData.muz.clone().applyMatrix4(t.mesh.matrixWorld), new THREE.Vector3(tgt.mesh.position.x, tgt.mesh.position.y + 1.4, tgt.mesh.position.z), t.stats.color); sfx.play('shoot');
+                    let hits = [tgt]; if (t.stats.aoe) hits = gState.enemies.filter(e => e.mesh.position.distanceTo(tgt.mesh.position) <= t.stats.aoe);
+                    hits.forEach(en => {
+                        en.hp -= t.stats.damage; if (t.stats.slows) en.slowTimer = 2.5; updateEnemyHealthUI(en); floatingText(en.mesh.position, `-${t.stats.damage}`);
+                        if (en.hp <= 0 && !en.dead) { en.dead = true; addMatchCash(en.cashRew); t.kills++; en.hudTag.remove(); scene.remove(en.mesh); const idx = gState.enemies.indexOf(en); if (idx > -1) gState.enemies.splice(idx, 1); updateIGStats(); }
+                    });
+                }
+            }
+        });
+
+        for (let i = gState.projectiles.length - 1; i >= 0; i--) { const p = gState.projectiles[i]; p.life -= delta; p.mesh.material.opacity = Math.max(0, p.life / 0.09); if (p.life <= 0) { scene.remove(p.mesh); gState.projectiles.splice(i, 1); } }
+
+        if (gState.active && gState.enemiesQueue.length === 0 && gState.enemies.length === 0) {
+            gState.active = false; document.getElementById('btn-next-wave').disabled = false;
+            if (gState.wave > pData.highestWave) pData.highestWave = gState.wave;
+            const waveCashBonus = 110 + (gState.wave * 30); addMatchCash(waveCashBonus); sfx.play('coin');
+            if (gState.difficulty === 'endless') { addShopCoins(25); showToast(`💵 +$${waveCashBonus} y +25 🪙!`, true); } else { showToast(`💵 ¡Oleada superada! +$${waveCashBonus}`, true); }
+            gState.towers.forEach(t => { if (t.stats.isFarm) { const farmCash = 80 * t.level; addMatchCash(farmCash); floatingText(t.mesh.position, `+$${farmCash}`, 'text-emerald-300'); } if (t.stats.isMedic) { const heal = 8 * t.level; gState.hp = Math.min(100, gState.hp + heal); floatingText(t.mesh.position, `+${heal} ❤️`, 'text-green-400'); } });
+            updateIGStats(); saveAllProgress();
+            if (gState.difficulty !== 'endless' && gState.wave >= gState.maxWave) { endGame(true); } else if (gState.auto) { setTimeout(() => { if (!gState.active && gState.mode === 'game') startNextWave(); }, 900); }
+        }
+    } else { camera.position.set(Math.sin(time * 0.22) * 20, 52, 62); camera.lookAt(Math.sin(time * 0.22) * 14, 0, -4); }
+    renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+
+window.addEventListener('DOMContentLoaded', () => {
+    loadSavedProgress();
+    checkFirstTimeLogin();
+    updateHourlyMapRotationSystem();
+    renderArmory();
+    renderLeaderboards();
+    updateUIStats();
+    checkTradeTab();
+    updateResumeMatchBanner();
+    animate();
+});
+</script>
+</body>
+</html>
